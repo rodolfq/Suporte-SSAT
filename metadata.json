@@ -1,0 +1,6 @@
+{
+  "name": "Remix: Performance Suporte",
+  "description": "Dashboard de análise de performance para equipes de suporte com ranking de colaboradores, insights inteligentes e gráficos avançados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

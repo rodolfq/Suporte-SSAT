@@ -1,0 +1,30 @@
+# Ponto de Retorno - 09/04/2026
+
+Este arquivo serve como um registro das mudanças realizadas para permitir um rollback manual, se necessário.
+
+## Mudanças Realizadas:
+1. **Gamificação**:
+   - Adicionado sistema de Badges (Medalhas) no `AgentDetail`.
+   - Adicionado Painel de Metas Individuais no `AgentDetail`.
+   - Persistência no Supabase via tabela `collaborator_settings`.
+
+2. **UX e Gestão**:
+   - Dashboards Customizáveis: Implementado Drag and Drop nos widgets do `Dashboard`.
+   - Modo Dark: Implementado suporte a temas usando `next-themes` e `ThemeToggle`.
+   - Gráfico de Volume de Chats: Adicionado gráfico de linha por horário no `Dashboard`.
+
+3. **Odoo**:
+   - Correção no formato do ID dos tickets (#ID Titulo).
+   - Correção nos links dos tickets para usar o ID correto.
+
+## Arquivos Modificados:
+- `/lib/data-utils.ts`: Lógica de estatísticas e interfaces.
+- `/context/app-context.tsx`: Estado global, persistência e tipos.
+- `/components/dashboard.tsx`: Widgets, Drag and Drop, Gráfico de Horário.
+- `/components/agent-detail.tsx`: UI de Badges e Metas.
+- `/app/page.tsx`: Layout principal, Sidebar, Header e ThemeToggle.
+- `/app/layout.tsx`: Configuração do ThemeProvider.
+- `/tailwind.config.js`: Habilitação do dark mode.
+
+## Como reverter:
+Para reverter, as alterações nos arquivos acima devem ser desfeitas. Como não há um sistema de backup automático de arquivos individuais neste ambiente, recomenda-se a revisão manual das alterações caso o resultado não seja o esperado.

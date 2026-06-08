@@ -1,0 +1,60 @@
+[33mcommit c669b29f1f1215512280bba4fbdab8f2efaab859[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Rodolfo Quintanilha <rodolfoquintanilha@hotmail.com>
+Date:   Wed May 27 14:26:54 2026 -0300
+
+    Restauração do projeto
+
+ .env.example                                       |    36 [32m+[m
+ .eslintrc.json                                     |     3 [32m+[m
+ .gitignore                                         |    36 [32m+[m
+ .kilo/kilo.jsonc                                   |     3 [32m+[m
+ app/api/auth/set-password/route.ts                 |   121 [32m+[m
+ app/api/bitrix/schedules/route.ts                  |    82 [32m+[m
+ app/api/bitrix/timeman/check-schedules/route.ts    |    95 [32m+[m
+ app/api/bitrix/timeman/route.ts                    |   146 [32m+[m
+ app/api/debug/supabase/route.ts                    |    59 [32m+[m
+ app/api/kb/chat/route.ts                           |    80 [32m+[m
+ app/api/kb/notes/route.ts                          |    52 [32m+[m
+ app/api/kb/upload/route.ts                         |   181 [32m+[m
+ app/api/odoo/tickets/route.ts                      |   103 [32m+[m
+ app/api/settings/secrets/route.ts                  |    52 [32m+[m
+ app/api/tickets/route.ts                           |   421 [32m+[m
+ app/api/training/proxy/route.ts                    |    36 [32m+[m
+ app/chats-dashboard/page.tsx                       |   146 [32m+[m
+ app/globals.css                                    |    60 [32m+[m
+ app/layout.tsx                                     |    34 [32m+[m
+ app/page.tsx                                       |   661 [32m+[m
+ app/tickets-dashboard/page.tsx                     |   146 [32m+[m
+ check-db.ts                                        |    46 [32m+[m
+ check-supabase.js                                  |    33 [32m+[m
+ codigo_completo.txt                                | 25466 [32m+++++++++++++++++++[m
+ components/agent-detail.tsx                        |   682 [32m+[m
+ components/avatar-creator.tsx                      |   549 [32m+[m
+ components/bitrix-tickets-dashboard.tsx            |   840 [32m+[m
+ components/bitrix-tickets-view.tsx                 |   496 [32m+[m
+ components/chart-container.tsx                     |    28 [32m+[m
+ components/comparison-view.tsx                     |   339 [32m+[m
+ components/dashboard-chart.tsx                     |    72 [32m+[m
+ components/dashboard.tsx                           |   819 [32m+[m
+ components/file-upload.tsx                         |   371 [32m+[m
+ components/filter-bar.tsx                          |   195 [32m+[m
+ components/filters.tsx                             |   179 [32m+[m
+ components/general-dashboard.tsx                   |   789 [32m+[m
+ components/knowledge-base.tsx                      |   698 [32m+[m
+ components/login.tsx                               |   237 [32m+[m
+ components/metrics-view.tsx                        |   229 [32m+[m
+ components/odoo-tickets-dashboard.tsx              |   811 [32m+[m
+ components/odoo-tickets-view.tsx                   |   848 [32m+[m
+ components/queue-dashboard.tsx                     |  1589 [32m++[m
+ components/ranking-table.tsx                       |   395 [32m+[m
+ components/raw-data-view.tsx                       |   221 [32m+[m
+ components/settings.tsx                            |  1772 [32m++[m
+ components/theme-provider.tsx                      |    11 [32m+[m
+ components/theme-toggle.tsx                        |    20 [32m+[m
+ components/training-dashboard.tsx                  |   603 [32m+[m
+ context/app-context.tsx                            |  1818 [32m++[m
+ context/queue-context.tsx                          |  1106 [32m+[m
+ extract_eyepatch.js                                |    15 [32m+[m
+ extract_eyepatch2.js                               |    15 [32m+[m
+ find_nose.js                                       |    10 [32m+[m
+ firebase-applet-config.json                        |  

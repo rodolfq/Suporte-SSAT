@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Altura padrão para gráficos */
+    --chart-height: clamp(260px, 35vh, 420px);
+    --tooltip-bg: #ffffff;
+    --tooltip-color: #0f172a;
+    --tooltip-border: #e2e8f0;
+    --chart-cursor: rgba(0, 0, 0, 0.04);
+  }
+
+  .dark {
+    --tooltip-bg: #0f172a;
+    --tooltip-color: #f1f5f9;
+    --tooltip-border: #1e293b;
+    --chart-cursor: rgba(255, 255, 255, 0.1);
+  }
+
+  * {
+    @apply border-slate-200 dark:border-slate-800;
+  }
+
+  body {
+    @apply bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased;
+  }
+}
+
+/* ============================= */
+/* Correção global para Recharts */
+/* ============================= */
+
+.chart-container {
+  width: 100%;
+  height: var(--chart-height);
+  min-height: 260px;
+  min-width: 0; /* IMPORTANTE para layouts flex/grid */
+  position: relative;
+  display: block;
+}
+
+/* container interno do recharts */
+.recharts-responsive-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0;
+  min-height: 260px;
+}
+
+/* evita bug em grids do dashboard */
+.grid > * {
+  min-width: 0;
+}
+
+/* evita bug em flex layouts */
+.flex > * {
+  min-width: 0;
+}

@@ -85,7 +85,8 @@ export default function Dashboard({ filteredCollaborators, onViewRanking }: Dash
     selectedRows, 
     uploads,
     dateFilter,
-    dateRange
+    dateRange,
+    pointsConfig
   } = useApp();
   const [showAllCustomers, setShowAllCustomers] = React.useState(false);
   const [customerSearch, setCustomerSearch] = React.useState('');
@@ -126,9 +127,9 @@ export default function Dashboard({ filteredCollaborators, onViewRanking }: Dash
     
     if (filteredRows.length === 0) return globalDashboard;
     
-    const { dashboard: filteredDash } = calculateStats(filteredRows);
+    const { dashboard: filteredDash } = calculateStats(filteredRows, pointsConfig);
     return filteredDash;
-  }, [filteredCollaborators, globalDashboard, selectedRows]);
+  }, [filteredCollaborators, globalDashboard, selectedRows, pointsConfig]);
 
   const sortedCustomers = React.useMemo(() => {
     if (!dashboard) return [];

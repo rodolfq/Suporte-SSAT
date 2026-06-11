@@ -154,27 +154,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedRows, setSelectedRows] = useState<SupportData[]>([]);
   const [bitrixTickets, setBitrixTickets] = useState<any[]>([]);
   const [odooTickets, setOdooTickets] = useState<any[]>([]);
-   const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
-     if (typeof window !== 'undefined') {
-       const saved = localStorage.getItem('ranking_points_config');
-       if (saved) {
-         try {
-           return JSON.parse(saved);
-         } catch (e) {
-           console.error('Error parsing loaded points config:', e);
-         }
-       }
-     }
-     return {
-       volume: 1,
-       fiveStars: 10,
-       oneStar: -90,
-       speedUnder1m: 5,
-       speedUnder3m: 0.5,
-       speedOver3m: -1,
-       volumeLimit: 0, // 0 means no limit
-     };
-   });
+const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('ranking_points_config');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error('Error parsing loaded points config:', e);
+        }
+      }
+    }
+    return {
+      volume: 1,
+      fiveStars: 10,
+      oneStar: -90,
+      speedUnder1m: 5,
+      speedUnder3m: 0.5,
+      speedOver3m: -1,
+      volumeLimit: 0,
+      responseRateBonusTiers: [
+        { id: '1', minPercentage: 20, bonusPoints: 10 },
+        { id: '2', minPercentage: 25, bonusPoints: 20 },
+        { id: '3', minPercentage: 30, bonusPoints: 30 }
+      ]
+    };
+  });
 
   const updatePointsConfig = (newConfig: RankingPointsConfig) => {
     setPointsConfig(newConfig);

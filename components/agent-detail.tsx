@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { CollaboratorStats } from '@/lib/data-utils';
-import { X, Clock, CheckCircle, TrendingUp, TrendingDown, Lightbulb, Award, GraduationCap, MessageSquare, Zap, ThumbsUp, ThumbsDown, Plus, Target, Medal } from 'lucide-react';
+import { X, Clock, CheckCircle, TrendingUp, TrendingDown, Lightbulb, Award, GraduationCap, MessageSquare, Zap, ThumbsUp, ThumbsDown, Plus, Target, Medal, Percent } from 'lucide-react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '@/context/app-context';
@@ -303,32 +303,54 @@ export default function AgentDetail({ agent, onClose }: AgentDetailProps) {
                     </div>
                   </div>
 
-                  {/* Speed */}
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
-                      <h4 className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-emerald-500" /> Velocidade
-                      </h4>
-                      <span className={`font-black ${agent.pointsBreakdown.speed.under1m.points + agent.pointsBreakdown.speed.under3m.points + agent.pointsBreakdown.speed.over3m.points >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                        {agent.pointsBreakdown.speed.under1m.points + agent.pointsBreakdown.speed.under3m.points + agent.pointsBreakdown.speed.over3m.points > 0 ? '+' : ''}
-                        {agent.pointsBreakdown.speed.under1m.points + agent.pointsBreakdown.speed.under3m.points + agent.pointsBreakdown.speed.over3m.points} pts
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Respostas &lt; 1 min ({agent.pointsBreakdown.speed.under1m.count}x {pointsConfig.speedUnder1m} pts)</span>
-                      <span className="font-medium text-emerald-600 dark:text-emerald-400">+{agent.pointsBreakdown.speed.under1m.points} pts</span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Respostas 1-3 min ({agent.pointsBreakdown.speed.under3m.count}x {pointsConfig.speedUnder3m} pts)</span>
-                      <span className="font-medium text-emerald-600 dark:text-emerald-400">+{agent.pointsBreakdown.speed.under3m.points} pts</span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Respostas &gt; 3 min ({agent.pointsBreakdown.speed.over3m.count}x {pointsConfig.speedOver3m} pt)</span>
-                      <span className="font-medium text-rose-600 dark:text-rose-400">{agent.pointsBreakdown.speed.over3m.points} pts</span>
-                    </div>
-                  </div>
+{/* Speed */}
+                   <div className="space-y-3">
+                     <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                       <h4 className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                         <Zap className="w-4 h-4 text-emerald-500" /> Velocidade
+                       </h4>
+                       <span className={`font-black ${agent.pointsBreakdown.speed.under1m.points + agent.pointsBreakdown.speed.under3m.points + agent.pointsBreakdown.speed.over3m.points >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                         {agent.pointsBreakdown.speed.under1m.points + agent.pointsBreakdown.speed.under3m.points + agent.pointsBreakdown.speed.over3m.points > 0 ? '+' : ''}
+                         {agent.pointsBreakdown.speed.under1m.points + agent.pointsBreakdown.speed.under3m.points + agent.pointsBreakdown.speed.over3m.points} pts
+                       </span>
+                     </div>
+                     <div className="flex justify-between items-center text-sm">
+                       <span className="text-slate-500 dark:text-slate-400">Respostas &lt; 1 min ({agent.pointsBreakdown.speed.under1m.count}x {pointsConfig.speedUnder1m} pts)</span>
+                       <span className="font-medium text-emerald-600 dark:text-emerald-400">+{agent.pointsBreakdown.speed.under1m.points} pts</span>
+                     </div>
+                     <div className="flex justify-between items-center text-sm">
+                       <span className="text-slate-500 dark:text-slate-400">Respostas 1-3 min ({agent.pointsBreakdown.speed.under3m.count}x {pointsConfig.speedUnder3m} pts)</span>
+                       <span className="font-medium text-emerald-600 dark:text-emerald-400">+{agent.pointsBreakdown.speed.under3m.points} pts</span>
+                     </div>
+                     <div className="flex justify-between items-center text-sm">
+                       <span className="text-slate-500 dark:text-slate-400">Respostas &gt; 3 min ({agent.pointsBreakdown.speed.over3m.count}x {pointsConfig.speedOver3m} pt)</span>
+                       <span className="font-medium text-rose-600 dark:text-rose-400">{agent.pointsBreakdown.speed.over3m.points} pts</span>
+                     </div>
+                   </div>
 
-                  {/* Total */}
+                   {/* Response Rate Bonus */}
+                   {agent.pointsBreakdown.responseRateBonus && agent.pointsBreakdown.responseRateBonus.bonusPoints > 0 && (
+                   <div className="space-y-3">
+                     <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                       <h4 className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                         <Percent className="w-4 h-4 text-indigo-500" /> Bonificação Taxa de Resposta
+                       </h4>
+                       <span className="font-black text-indigo-600 dark:text-indigo-400">
+                         +{agent.pointsBreakdown.responseRateBonus.bonusPoints} pts
+                       </span>
+                     </div>
+                     <div className="flex justify-between items-center text-sm">
+                       <span className="text-slate-500 dark:text-slate-400">
+                         Taxa atingida: {agent.responseRate?.toFixed(1)}%
+                         {agent.pointsBreakdown.responseRateBonus.minPercentage && 
+                          ` (faixa: ≥${agent.pointsBreakdown.responseRateBonus.minPercentage}%)`}
+                       </span>
+                       <span className="font-medium text-indigo-600 dark:text-indigo-400">+{agent.pointsBreakdown.responseRateBonus.bonusPoints} pts</span>
+                     </div>
+                   </div>
+                   )}
+
+                   {/* Total */}
                   <div className="mt-6 pt-4 border-t-2 border-slate-800 dark:border-slate-700 flex justify-between items-center">
                     <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">Pontuação Total</h4>
                     <span className="text-2xl font-black text-primary">{agent.pointsBreakdown.total} pts</span>

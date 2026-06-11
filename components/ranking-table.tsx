@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import Image from 'next/image';
 import { useApp } from '@/context/app-context';
 import { CollaboratorStats } from '@/lib/data-utils';
-import { ThumbsUp, ThumbsDown, ArrowUpDown, ChevronLeft, ChevronRight, FileDown, Info, Zap, Trophy, MessageSquare, X, Clock, Star } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, ArrowUpDown, ChevronLeft, ChevronRight, FileDown, Info, Zap, Trophy, MessageSquare, X, Clock, Star, Percent } from 'lucide-react';
 
 interface RankingTableProps {
   onSelect: (collab: CollaboratorStats) => void;
@@ -56,6 +56,11 @@ export default function RankingTable({ onSelect, filteredCollaborators, showRule
           medium: { count: agentBreakdown.speed.under3m.count, label: '1-3 min', points: pointsConfig.speedUnder3m, total: agentBreakdown.speed.under3m.points },
           slow: { count: agentBreakdown.speed.over3m.count, label: '> 3 min', points: pointsConfig.speedOver3m, total: agentBreakdown.speed.over3m.points }
         },
+responseRateBonus: {
+           rate: selectedCollab.responseRate,
+           bonusPoints: agentBreakdown.responseRateBonus?.bonusPoints || 0,
+           minPercentage: agentBreakdown.responseRateBonus?.minPercentage
+         },
         total: agentBreakdown.total
       };
     }, [selectedCollab, pointsConfig]);
@@ -137,14 +142,29 @@ export default function RankingTable({ onSelect, filteredCollaborators, showRule
                   <p className="text-sm font-medium text-slate-200 dark:text-slate-300">Impacto das avaliações:</p>
                   <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
                     Nota 5: {pointsConfig.fiveStars > 0 ? '+' : ''}{pointsConfig.fiveStars} pts | Nota 1 (Bad): {pointsConfig.oneStar > 0 ? '+' : ''}{pointsConfig.oneStar} pts
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl" />
-        </div>
-      )}
+</p>
+                 </div>
+               </div>
+
+                <div className="flex gap-3">
+                 <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center text-indigo-500 shrink-0">
+                   <Percent className="w-4 h-4" />
+                 </div>
+                 <div>
+                   <p className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Taxa de Resposta</p>
+                   <p className="text-sm font-medium text-slate-200 dark:text-slate-300">Bonificação por taxa de avaliações:</p>
+                   <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                     {pointsConfig.responseRateBonusTiers?.length > 0 
+                       ? pointsConfig.responseRateBonusTiers.sort((a, b) => a.minPercentage - b.minPercentage).map(t => `${t.minPercentage}%+ = +${t.bonusPoints}`).join(' | ')
+                       : 'Nenhuma regra configurada'}
+                   </p>
+                 </div>
+               </div>
+             </div>
+           </div>
+           <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl" />
+         </div>
+       )}
 
       <div className="flex justify-end items-center">
         <button 
@@ -293,34 +313,34 @@ export default function RankingTable({ onSelect, filteredCollaborators, showRule
               </div>
             </div>
 
-            <div className="space-y-6">
-{/* Volume */}
- <div className="space-y-3">
-   <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
-     <h4 className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-       <MessageSquare className="w-4 h-4 text-blue-500" />
-       Volume
-     </h4>
-     <span className="font-black text-blue-600 dark:text-blue-400">+{pointsBreakdown.volume.total} pts</span>
-   </div>
-   <div className="flex justify-between items-center text-sm">
-     <span className="text-slate-500 dark:text-slate-400">Atendimentos realizados ({pointsBreakdown.volume.count}x {pointsBreakdown.volume.perItem} pt)</span>
-     <span className="font-medium dark:text-slate-300">+{pointsBreakdown.volume.total} pts</span>
-   </div>
-   {selectedCollab && selectedCollab.totalAtendimentos > 0 && (
-     <div className="flex justify-between items-center text-sm">
-       <span className="text-slate-500 dark:text-slate-400">Taxa de Avaliações</span>
-       <span className="font-medium text-slate-700 dark:text-slate-300">
-         {selectedCollab.totalEvaluations} / {selectedCollab.totalAtendimentos} ({Math.round((selectedCollab.totalEvaluations / selectedCollab.totalAtendimentos) * 100)}%)
-       </span>
-     </div>
-   )}
-   {pointsConfig.volumeLimit > 0 && pointsBreakdown.volume.total >= pointsConfig.volumeLimit && (
-     <div className="text-[9px] text-slate-500 dark:text-slate-400 italic pt-1">
-       Limite de volume atingido ({pointsConfig.volumeLimit} pts máximo)
-     </div>
-   )}
- </div>
+<div className="space-y-6">
+              {/* Volume */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <h4 className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-blue-500" />
+                    Volume
+                  </h4>
+                  <span className="font-black text-blue-600 dark:text-blue-400">+{pointsBreakdown.volume.total} pts</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Atendimentos realizados ({pointsBreakdown.volume.count}x {pointsBreakdown.volume.perItem} pt)</span>
+                  <span className="font-medium dark:text-slate-300">+{pointsBreakdown.volume.total} pts</span>
+                </div>
+                {selectedCollab && selectedCollab.totalAtendimentos > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-500 dark:text-slate-400">Taxa de Avaliações</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      {selectedCollab.totalEvaluations} / {selectedCollab.totalAtendimentos} ({Math.round((selectedCollab.totalEvaluations / selectedCollab.totalAtendimentos) * 100)}%)
+                    </span>
+                  </div>
+                )}
+                {pointsConfig.volumeLimit > 0 && pointsBreakdown.volume.total >= pointsConfig.volumeLimit && (
+                  <div className="text-[9px] text-slate-500 dark:text-slate-400 italic pt-1">
+                    Limite de volume atingido ({pointsConfig.volumeLimit} pts máximo)
+                  </div>
+                )}
+              </div>
 
               {/* Quality */}
               <div className="space-y-3">
@@ -333,20 +353,20 @@ export default function RankingTable({ onSelect, filteredCollaborators, showRule
                     {pointsBreakdown.quality.total >= 0 ? '+' : ''}{pointsBreakdown.quality.total} pts
                   </span>
                 </div>
-<div className="flex justify-between items-center text-sm">
-                   <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                     <ThumbsUp className="w-3 h-3 text-emerald-500" />
-                     Good ({pointsBreakdown.quality.good.count}x {pointsBreakdown.quality.good.points} pts)
-                   </span>
-                   <span className="font-medium text-emerald-600 dark:text-emerald-400">{pointsBreakdown.quality.good.total >= 0 ? '+' : ''}{pointsBreakdown.quality.good.total} pts</span>
-                 </div>
-                 <div className="flex justify-between items-center text-sm">
-                   <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                     <ThumbsDown className="w-3 h-3 text-red-500" />
-                     Bad ({pointsBreakdown.quality.bad.count}x {pointsBreakdown.quality.bad.points} pts)
-                   </span>
-                   <span className="font-medium text-red-600 dark:text-red-400">{pointsBreakdown.quality.bad.total} pts</span>
-                 </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    <ThumbsUp className="w-3 h-3 text-emerald-500" />
+                    Good ({pointsBreakdown.quality.good.count}x {pointsBreakdown.quality.good.points} pts)
+                  </span>
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{pointsBreakdown.quality.good.total >= 0 ? '+' : ''}{pointsBreakdown.quality.good.total} pts</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    <ThumbsDown className="w-3 h-3 text-red-500" />
+                    Bad ({pointsBreakdown.quality.bad.count}x {pointsBreakdown.quality.bad.points} pts)
+                  </span>
+                  <span className="font-medium text-red-600 dark:text-red-400">{pointsBreakdown.quality.bad.total} pts</span>
+                </div>
               </div>
 
               {/* Speed */}
@@ -360,19 +380,42 @@ export default function RankingTable({ onSelect, filteredCollaborators, showRule
                     {pointsBreakdown.speed.total >= 0 ? '+' : ''}{pointsBreakdown.speed.total} pts
                   </span>
                 </div>
-<div className="flex justify-between items-center text-sm">
-                   <span className="text-slate-500 dark:text-slate-400">Respostas {pointsBreakdown.speed.fast.label} ({pointsBreakdown.speed.fast.count}x {pointsBreakdown.speed.fast.points} pts)</span>
-                   <span className="font-medium text-emerald-600 dark:text-emerald-400">{pointsBreakdown.speed.fast.total >= 0 ? '+' : ''}{pointsBreakdown.speed.fast.total} pts</span>
-                 </div>
-                 <div className="flex justify-between items-center text-sm">
-                   <span className="text-slate-500 dark:text-slate-400">Respostas {pointsBreakdown.speed.medium.label} ({pointsBreakdown.speed.medium.count}x {pointsBreakdown.speed.medium.points} pts)</span>
-                   <span className="font-medium text-emerald-600 dark:text-emerald-400">{pointsBreakdown.speed.medium.total >= 0 ? '+' : ''}{pointsBreakdown.speed.medium.total} pts</span>
-                 </div>
-                 <div className="flex justify-between items-center text-sm">
-                   <span className="text-slate-500 dark:text-slate-400">Respostas {pointsBreakdown.speed.slow.label} ({pointsBreakdown.speed.slow.count}x {pointsBreakdown.speed.slow.points} pt)</span>
-                   <span className="font-medium text-rose-600 dark:text-rose-400">{pointsBreakdown.speed.slow.total} pts</span>
-                 </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Respostas {pointsBreakdown.speed.fast.label} ({pointsBreakdown.speed.fast.count}x {pointsBreakdown.speed.fast.points} pts)</span>
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{pointsBreakdown.speed.fast.total >= 0 ? '+' : ''}{pointsBreakdown.speed.fast.total} pts</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Respostas {pointsBreakdown.speed.medium.label} ({pointsBreakdown.speed.medium.count}x {pointsBreakdown.speed.medium.points} pts)</span>
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{pointsBreakdown.speed.medium.total >= 0 ? '+' : ''}{pointsBreakdown.speed.medium.total} pts</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Respostas {pointsBreakdown.speed.slow.label} ({pointsBreakdown.speed.slow.count}x {pointsBreakdown.speed.slow.points} pt)</span>
+                  <span className="font-medium text-rose-600 dark:text-rose-400">{pointsBreakdown.speed.slow.total} pts</span>
+                </div>
               </div>
+
+{/* Response Rate Bonus */}
+              {pointsBreakdown.responseRateBonus && pointsBreakdown.responseRateBonus.bonusPoints > 0 && (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <h4 className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <Percent className="w-4 h-4 text-indigo-500" />
+                    Bonificação Taxa de Resposta
+                  </h4>
+<span className="font-black text-indigo-600 dark:text-indigo-400">
+                    +{pointsBreakdown.responseRateBonus.bonusPoints} pts
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">
+                    Taxa atingida: {pointsBreakdown.responseRateBonus.rate?.toFixed(1)}%
+                    {pointsBreakdown.responseRateBonus.minPercentage && 
+                     ` (faixa: ≥${pointsBreakdown.responseRateBonus.minPercentage}%)`}
+                  </span>
+                  <span className="font-medium text-indigo-600 dark:text-indigo-400">+{pointsBreakdown.responseRateBonus.bonusPoints} pts</span>
+                </div>
+              </div>
+              )}
 
               {/* Total */}
               <div className="mt-6 pt-4 border-t-2 border-slate-800 dark:border-slate-700 flex justify-between items-center">

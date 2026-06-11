@@ -47,6 +47,12 @@ export interface ProcessedResult {
   logs?: any[];
 }
 
+export interface ResponseRateBonusTier {
+  id: string;
+  minPercentage: number;
+  bonusPoints: number;
+}
+
 export interface PointsBreakdown {
   volume: { count: number; points: number };
   quality: {
@@ -59,6 +65,7 @@ export interface PointsBreakdown {
     under3m: { count: number; points: number };
     over3m: { count: number; points: number };
   };
+  responseRateBonus: { tierId?: string; minPercentage?: number; bonusPoints: number };
   total: number;
 }
 
@@ -70,6 +77,7 @@ export interface RankingPointsConfig {
   speedUnder3m: number;
   speedOver3m: number;
   volumeLimit: number;
+  responseRateBonusTiers: ResponseRateBonusTier[];
 }
 
 export interface CollaboratorStats {
@@ -100,6 +108,7 @@ export interface CollaboratorStats {
     volume: number;
     engagement: number;
   };
+  responseRate?: number;
 }
 
 export const DEFAULT_AVATARS = [
@@ -1030,6 +1039,7 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
             under3m: { count: 0, points: 0 },
             over3m: { count: 0, points: 0 }
           },
+          responseRateBonus: { bonusPoints: 0 },
           total: 0
         }
       });
@@ -1116,6 +1126,8 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
 
   const collaborators: CollaboratorStats[] = Array.from(collabMap.entries()).map(([name, stats]) => {
     const totalAtendimentosWithRating = stats.ratings.length;
+    const totalEvaluations = stats.ratings.length;
+    const responseRate = stats.count > 0 ? (totalEvaluations / stats.count) * 100 : 0;
     const avgRating = totalAtendimentosWithRating > 0 ? stats.ratings.reduce((a, b) => a + b, 0) / totalAtendimentosWithRating : 0;
     
     const totalAtendimentosWithTime = stats.times.length;
@@ -1124,16 +1136,32 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
     const totalAtendimentosWithDuracao = stats.duracoes.length;
     const avgDuracao = totalAtendimentosWithDuracao > 0 ? stats.duracoes.reduce((a, b) => a + b, 0) / totalAtendimentosWithDuracao : 0;
     
+    // Calculate response rate bonus
+    const responseRateBonusTiers = config?.responseRateBonusTiers || [];
+    const sortedTiers = [...responseRateBonusTiers].sort((a, b) => b.minPercentage - a.minPercentage);
+    const applicableTier = sortedTiers.find(tier => responseRate >= tier.minPercentage);
+    const bonusPoints = applicableTier ? applicableTier.bonusPoints : 0;
+    
+    // Add bonus to points
+    const finalPoints = stats.points + bonusPoints;
+    stats.breakdown.responseRateBonus = {
+      tierId: applicableTier?.id,
+      minPercentage: applicableTier?.minPercentage,
+      bonusPoints
+    };
+    stats.breakdown.total = finalPoints;
+    
     return {
       name,
       totalAtendimentos: stats.count,
-      totalEvaluations: stats.ratings.length,
+      totalEvaluations,
       avgRating,
       avgResponseTime,
       avgDuracao,
-      totalPoints: stats.points,
+      totalPoints: finalPoints,
       pointsBreakdown: stats.breakdown,
-      score: 0 // Will calculate below
+      score: 0, // Will calculate below
+      responseRate
     };
   });
 

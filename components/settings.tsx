@@ -37,8 +37,11 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Plus,
+  Percent
 } from 'lucide-react';
+import { ResponseRateBonusTier } from '@/lib/data-utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -73,19 +76,20 @@ function RankingRulesWidget({
   const [isSaved, setIsSaved] = React.useState(true);
   const [showSuccess, setShowSuccess] = React.useState(false);
 
-   // Check if config has changed from saved state
-   React.useEffect(() => {
-     const hasChanged = 
-       pointsConfig.volume !== savedConfig.volume ||
-       pointsConfig.fiveStars !== savedConfig.fiveStars ||
-       pointsConfig.oneStar !== savedConfig.oneStar ||
-       pointsConfig.speedUnder1m !== savedConfig.speedUnder1m ||
-       pointsConfig.speedUnder3m !== savedConfig.speedUnder3m ||
-       pointsConfig.speedOver3m !== savedConfig.speedOver3m ||
-       pointsConfig.volumeLimit !== savedConfig.volumeLimit;
-     
-     setIsSaved(!hasChanged);
-   }, [pointsConfig, savedConfig]);
+// Check if config has changed from saved state
+    React.useEffect(() => {
+      const hasChanged = 
+        pointsConfig.volume !== savedConfig.volume ||
+        pointsConfig.fiveStars !== savedConfig.fiveStars ||
+        pointsConfig.oneStar !== savedConfig.oneStar ||
+        pointsConfig.speedUnder1m !== savedConfig.speedUnder1m ||
+        pointsConfig.speedUnder3m !== savedConfig.speedUnder3m ||
+        pointsConfig.speedOver3m !== savedConfig.speedOver3m ||
+        pointsConfig.volumeLimit !== savedConfig.volumeLimit ||
+        (pointsConfig.responseRateBonusTiers || []).length !== (savedConfig.responseRateBonusTiers || []).length;
+      
+      setIsSaved(!hasChanged);
+    }, [pointsConfig, savedConfig]);
 
   const handleSave = () => {
     // Config is already saved to localStorage via updatePointsConfig
@@ -202,6 +206,308 @@ function RankingRulesWidget({
             </div>
           </div>
         </div>
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            {!isSaved && (
+              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" />
+                Alterações pendentes
+              </span>
+            )}
+            {showSuccess && (
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 animate-in fade-in slide-in-from-left-2">
+                <Check className="w-3 h-3" />
+                Configuração salva e aplicada!
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleRestoreDefault}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-all"
+            >
+              Restaurar Padrão
+            </button>
+            <button 
+              onClick={handleSave}
+              disabled={isSaved}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                isSaved 
+                  ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default' 
+                  : 'bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20'
+              }`}
+            >
+              {isSaved ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  Salvo
+                </>
+              ) : (
+                <>
+                  Salvar Alterações
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Response Rate Bonus Widget Component
+function ResponseRateBonusWidget({ 
+  pointsConfig, 
+  updatePointsConfig 
+}: { 
+  pointsConfig: any, 
+  updatePointsConfig: (config: any) => void 
+}) {
+  const [savedConfig, setSavedConfig] = React.useState(pointsConfig);
+  const [isSaved, setIsSaved] = React.useState(true);
+  const [showSuccess, setShowSuccess] = React.useState(false);
+  const [editingTier, setEditingTier] = React.useState<string | null>(null);
+  const [newTier, setNewTier] = React.useState({ minPercentage: null as number | null, bonusPoints: null as number | null });
+  const [validationError, setValidationError] = React.useState<string | null>(null);
+
+  const tiers = pointsConfig.responseRateBonusTiers || [];
+
+  React.useEffect(() => {
+    const savedTiers = savedConfig.responseRateBonusTiers || [];
+    const currentTiers = pointsConfig.responseRateBonusTiers || [];
+    const hasChanged = 
+      savedTiers.length !== currentTiers.length ||
+      savedTiers.some((t: any, i: number) => 
+        t.minPercentage !== currentTiers[i]?.minPercentage ||
+        t.bonusPoints !== currentTiers[i]?.bonusPoints
+      );
+    setIsSaved(!hasChanged);
+  }, [pointsConfig, savedConfig]);
+
+  const validateTiers = (tiers: any[]) => {
+    const percentages = tiers.map(t => t.minPercentage);
+    const duplicates = percentages.filter((p, i) => percentages.indexOf(p) !== i);
+    if (duplicates.length > 0) {
+      return `Percentual duplicado encontrado: ${duplicates[0]}%`;
+    }
+    for (const tier of tiers) {
+      if (tier.minPercentage < 0) {
+        return 'Percentual não pode ser negativo';
+      }
+      if (tier.bonusPoints < 0) {
+        return 'Pontos adicionais não podem ser negativos';
+      }
+    }
+    return null;
+  };
+
+  const handleSave = () => {
+    const error = validateTiers(tiers);
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    setValidationError(null);
+    setSavedConfig({ ...pointsConfig });
+    setIsSaved(true);
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
+
+  const handleAddTier = () => {
+    if (newTier.minPercentage === null || newTier.bonusPoints === null) {
+      setValidationError('Preencha ambos os campos');
+      return;
+    }
+    if (newTier.minPercentage < 0 || newTier.bonusPoints < 0) {
+      setValidationError('Valores não podem ser negativos');
+      return;
+    }
+    const newId = Date.now().toString();
+    const updatedTiers = [...tiers, { ...newTier, id: newId, minPercentage: newTier.minPercentage, bonusPoints: newTier.bonusPoints }];
+    const sortedTiers = updatedTiers.sort((a, b) => a.minPercentage - b.minPercentage);
+    
+    const error = validateTiers(sortedTiers);
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    
+    updatePointsConfig({
+      ...pointsConfig,
+      responseRateBonusTiers: sortedTiers
+    });
+    setNewTier({ minPercentage: null, bonusPoints: null });
+    setValidationError(null);
+  };
+
+  const handleEditTier = (id: string, field: 'minPercentage' | 'bonusPoints', value: number) => {
+    const updatedTiers = tiers.map((tier: ResponseRateBonusTier) =>
+      tier.id === id ? { ...tier, [field]: value } : tier
+    );
+    
+    const error = validateTiers(updatedTiers);
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    
+    setValidationError(null);
+    updatePointsConfig({
+      ...pointsConfig,
+      responseRateBonusTiers: updatedTiers
+    });
+    setEditingTier(null);
+  };
+
+  const handleDeleteTier = (id: string) => {
+    const updatedTiers = tiers.filter((tier: ResponseRateBonusTier) => tier.id !== id);
+    updatePointsConfig({
+      ...pointsConfig,
+      responseRateBonusTiers: updatedTiers
+    });
+  };
+
+  const handleRestoreDefault = () => {
+    const defaultConfig = {
+      ...pointsConfig,
+      responseRateBonusTiers: [
+        { id: '1', minPercentage: 20, bonusPoints: 10 },
+        { id: '2', minPercentage: 25, bonusPoints: 20 },
+        { id: '3', minPercentage: 30, bonusPoints: 30 }
+      ]
+    };
+    updatePointsConfig(defaultConfig);
+    setSavedConfig(defaultConfig);
+    setIsSaved(true);
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
+
+  const sortedTiers = [...tiers].sort((a, b) => a.minPercentage - b.minPercentage);
+
+  return (
+    <section className="space-y-4 h-full">
+      <h3 className="text-sm font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
+        <Percent className="w-4 h-4" />
+        Bonificação por Taxa de Resposta
+      </h3>
+      <div className="bg-white dark:bg-slate-900 rounded-[2rem] border border-slate-200 dark:border-slate-800 p-6 shadow-sm flex flex-col justify-between h-[calc(100%-2.5rem)] gap-4">
+        <div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+            Configure faixas de bonificação baseadas na taxa de avaliações respondidas pelos colaboradores. A maior faixa atingida será aplicada automaticamente.
+          </p>
+          
+          <div className="mb-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
+            <p className="text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-2">Exemplo:</p>
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="text-slate-500 dark:text-slate-400">
+                  <th className="text-left">Taxa mínima (%)</th>
+                  <th className="text-left">Pontos</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-700 dark:text-slate-300">
+                {sortedTiers.map(tier => (
+                  <tr key={tier.id}>
+                    <td>{tier.minPercentage}% →</td>
+                    <td>+{tier.bonusPoints} pts</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-3 max-h-60 overflow-y-auto custom-scrollbar">
+            {sortedTiers.map((tier) => (
+              <div key={tier.id} className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                <div className="flex-1 grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[9px] font-bold text-slate-500 uppercase">Mínimo (%)</label>
+                    {editingTier === tier.id ? (
+                      <input 
+                        type="number"
+                        min="0"
+                        value={tier.minPercentage}
+                        onChange={(e) => handleEditTier(tier.id, 'minPercentage', Number(e.target.value))}
+                        onBlur={() => setEditingTier(null)}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-bold"
+                      />
+                    ) : (
+                      <span 
+                        className="text-xs font-bold cursor-pointer hover:text-primary"
+                        onClick={() => setEditingTier(tier.id)}
+                      >
+                        {tier.minPercentage}%
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-bold text-slate-500 uppercase">Pontos</label>
+                    {editingTier === tier.id ? (
+                      <input 
+                        type="number"
+                        min="0"
+                        value={tier.bonusPoints}
+                        onChange={(e) => handleEditTier(tier.id, 'bonusPoints', Number(e.target.value))}
+                        onBlur={() => setEditingTier(null)}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs font-bold"
+                      />
+                    ) : (
+                      <span 
+                        className="text-xs font-bold cursor-pointer hover:text-primary"
+                        onClick={() => setEditingTier(tier.id)}
+                      >
+                        +{tier.bonusPoints}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDeleteTier(tier.id)}
+                  className="p-1 text-slate-400 hover:text-red-500 rounded"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+            <p className="text-[10px] font-bold text-slate-500 uppercase mb-2">Nova Faixa</p>
+<div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                min="0"
+                placeholder="Mínimo (%)"
+                value={newTier.minPercentage ?? ''}
+                onChange={(e) => setNewTier({ ...newTier, minPercentage: e.target.value ? Number(e.target.value) : null })}
+                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold"
+              />
+              <input
+                type="number"
+                min="0"
+                placeholder="Pontos"
+                value={newTier.bonusPoints ?? ''}
+                onChange={(e) => setNewTier({ ...newTier, bonusPoints: e.target.value ? Number(e.target.value) : null })}
+                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold"
+              />
+            </div>
+            <button
+              onClick={handleAddTier}
+              disabled={newTier.minPercentage === null || newTier.minPercentage === undefined || newTier.bonusPoints === null || newTier.bonusPoints === undefined}
+              className="mt-2 w-full px-3 py-1.5 bg-primary/10 text-primary rounded-xl text-xs font-bold hover:bg-primary/20 transition-all disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              <Plus className="w-3 h-3" />
+              Adicionar Faixa
+            </button>
+          </div>
+          
+          {validationError && (
+            <p className="text-[10px] text-red-500 mt-2">{validationError}</p>
+          )}
+        </div>
+
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-2">
             {!isSaved && (
@@ -454,16 +760,17 @@ export default function Settings() {
   const [isSavingBitrix, setIsSavingBitrix] = useState(false);
   const [showIntegrations, setShowIntegrations] = useState(false);
 
-  // Layout Management State
-  const defaultSettingsWidgets = [
-    { id: 'db-status', w: 12, h: 2 },
-    { id: 'api-integrations', w: 12, h: 2 },
-    { id: 'ranking-rules', w: 12, h: 4 },
-    { id: 'user-management', w: 12, h: 4 },
-    { id: 'bitrix-timeman', w: 12, h: 6 },
-    { id: 'uploads', w: 6, h: 4 },
-    { id: 'collaborators', w: 6, h: 4 }
-  ];
+// Layout Management State
+   const defaultSettingsWidgets = [
+     { id: 'db-status', w: 12, h: 2 },
+     { id: 'api-integrations', w: 12, h: 2 },
+     { id: 'ranking-rules', w: 12, h: 4 },
+     { id: 'response-rate-bonus', w: 12, h: 6 },
+     { id: 'user-management', w: 12, h: 4 },
+     { id: 'bitrix-timeman', w: 12, h: 6 },
+     { id: 'uploads', w: 6, h: 4 },
+     { id: 'collaborators', w: 6, h: 4 }
+   ];
 
   const [widgets, setWidgets] = useState(defaultSettingsWidgets);
 
@@ -1240,6 +1547,13 @@ export default function Settings() {
       case 'ranking-rules':
         return (
           <RankingRulesWidget 
+            pointsConfig={pointsConfig} 
+            updatePointsConfig={updatePointsConfig} 
+          />
+        );
+      case 'response-rate-bonus':
+        return (
+          <ResponseRateBonusWidget 
             pointsConfig={pointsConfig} 
             updatePointsConfig={updatePointsConfig} 
           />

@@ -77,19 +77,18 @@ function RankingRulesWidget({
   const [showSuccess, setShowSuccess] = React.useState(false);
 
 // Check if config has changed from saved state
-    React.useEffect(() => {
-      const hasChanged = 
-        pointsConfig.volume !== savedConfig.volume ||
-        pointsConfig.fiveStars !== savedConfig.fiveStars ||
-        pointsConfig.oneStar !== savedConfig.oneStar ||
-        pointsConfig.speedUnder1m !== savedConfig.speedUnder1m ||
-        pointsConfig.speedUnder3m !== savedConfig.speedUnder3m ||
-        pointsConfig.speedOver3m !== savedConfig.speedOver3m ||
-        pointsConfig.volumeLimit !== savedConfig.volumeLimit ||
-        (pointsConfig.responseRateBonusTiers || []).length !== (savedConfig.responseRateBonusTiers || []).length;
-      
-      setIsSaved(!hasChanged);
-    }, [pointsConfig, savedConfig]);
+React.useEffect(() => {
+       const hasChanged = 
+         pointsConfig.volume !== savedConfig.volume ||
+         pointsConfig.fiveStars !== savedConfig.fiveStars ||
+         pointsConfig.oneStar !== savedConfig.oneStar ||
+         pointsConfig.speedUnder1m !== savedConfig.speedUnder1m ||
+         pointsConfig.speedUnder3m !== savedConfig.speedUnder3m ||
+         pointsConfig.speedOver3m !== savedConfig.speedOver3m ||
+         pointsConfig.volumeLimit !== savedConfig.volumeLimit;
+       
+       setIsSaved(!hasChanged);
+     }, [pointsConfig, savedConfig]);
 
   const handleSave = () => {
     // Config is already saved to localStorage via updatePointsConfig
@@ -102,22 +101,23 @@ function RankingRulesWidget({
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
-   const handleRestoreDefault = () => {
-     const defaultConfig = {
-       volume: 1,
-       fiveStars: 10,
-       oneStar: -90,
-       speedUnder1m: 5,
-       speedUnder3m: 0.5,
-       speedOver3m: -1,
-       volumeLimit: 0 // 0 means no limit
-     };
-     updatePointsConfig(defaultConfig);
-     setSavedConfig(defaultConfig);
-     setIsSaved(true);
-     setShowSuccess(true);
-     setTimeout(() => setShowSuccess(false), 3000);
-   };
+const handleRestoreDefault = () => {
+      const defaultConfig = {
+        ...pointsConfig,
+        volume: 1,
+        fiveStars: 10,
+        oneStar: -90,
+        speedUnder1m: 5,
+        speedUnder3m: 0.5,
+        speedOver3m: -1,
+        volumeLimit: 0
+      };
+      updatePointsConfig(defaultConfig);
+      setSavedConfig(defaultConfig);
+      setIsSaved(true);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    };
 
   return (
     <section className="space-y-4 h-full">
@@ -291,11 +291,11 @@ function ResponseRateBonusWidget({
       return `Percentual duplicado encontrado: ${duplicates[0]}%`;
     }
     for (const tier of tiers) {
-      if (tier.minPercentage < 0) {
-        return 'Percentual não pode ser negativo';
+      if (tier.minPercentage === null || tier.minPercentage === undefined || isNaN(tier.minPercentage) || tier.minPercentage < 0) {
+        return 'Percentual deve ser um número válido não negativo';
       }
-      if (tier.bonusPoints < 0) {
-        return 'Pontos adicionais não podem ser negativos';
+      if (tier.bonusPoints === null || tier.bonusPoints === undefined || isNaN(tier.bonusPoints) || tier.bonusPoints < 0) {
+        return 'Pontos adicionais deve ser um número válido não negativo';
       }
     }
     return null;
@@ -968,55 +968,41 @@ export default function Settings() {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabaseClient = supabase;
-    if (!newUserEmail || !supabaseClient) return;
-    
+    if (!newUserEmail) return;
+
     setAddUserLoading(true);
     setAddUserError(null);
     try {
-      const defaultPermissions = newUserRole === 'admin' ? DEFAULT_ADMIN_PERMISSIONS : DEFAULT_USER_PERMISSIONS;
+      const sessionData = await supabase?.auth.getSession();
+      if (!sessionData || !sessionData.data?.session) {
+        throw new Error('Sessão expirada. Faça login novamente.');
+      }
 
-      const { error } = await supabaseClient
-        .from('profiles')
-        .upsert({
-          email: newUserEmail.trim().toLowerCase(),
-          role: newUserRole,
-          status: 'inactive',
-          permissions: defaultPermissions
-        }, { onConflict: 'email' });
+      const response = await fetch('/api/users/preauthorize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.data.session.access_token}`
+        },
+        body: JSON.stringify({
+          email: newUserEmail,
+          role: newUserRole
+        })
+      });
 
-      if (error) throw error;
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Erro ao pré-autorizar usuário');
+      }
 
       setNewUserEmail('');
       setShowAddUser(false);
       setResetSuccess(`Usuário ${newUserEmail} pré-autorizado como ${newUserRole}. Eles devem se cadastrar com este e-mail.`);
       setTimeout(() => setResetSuccess(null), 5000);
+      await fetchUsers();
     } catch (err: any) {
-      console.error('Erro detalhado ao adicionar usuário:', err);
-      
-      const errorMap: Record<string, string> = {
-        '42P01': 'Tabela "profiles" não encontrada. Execute o script SQL.',
-        'PGRST116': 'Erro de configuração na tabela "profiles".',
-        '42501': 'Permissão negada (RLS).',
-        '23505': 'Este e-mail já está cadastrado.',
-        '23502': 'Campo obrigatório ausente.',
-        '23503': 'Erro de chave estrangeira.',
-        'PGRST204': 'Erro de sintaxe na consulta.',
-        'PGRST301': 'Erro de autenticação Supabase.',
-      };
-
-      let errorMsg = 'Erro desconhecido';
-      if (err?.message === 'Failed to fetch') {
-        errorMsg = 'Falha na conexão com o banco de dados.';
-      } else if (err?.code && errorMap[err.code]) {
-        errorMsg = errorMap[err.code];
-      } else if (err?.code?.startsWith('PGRST')) {
-        errorMsg = `Erro de configuração Supabase (${err.code}).`;
-      } else {
-        errorMsg = err?.message || err?.details || String(err);
-      }
-      
-      setAddUserError(`Erro ao salvar usuário: ${errorMsg}`);
+      console.error('Erro ao adicionar usuário:', err);
+      setAddUserError(err.message || 'Erro ao pré-autorizar usuário.');
     } finally {
       setAddUserLoading(false);
     }

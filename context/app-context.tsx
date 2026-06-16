@@ -69,6 +69,9 @@ interface AppState {
   customRange: { start: string; end: string };
   setCustomRange: (range: { start: string; end: string } | ((prev: { start: string; end: string }) => { start: string; end: string })) => void;
   dateRange: { start: Date; end: Date };
+  columnFilters: { collaborators: string[]; clients: string[]; rating: number | null; messagesMin: number | null };
+  setColumnFilter: (key: string, value: any) => void;
+  clearColumnFilters: () => void;
   error: string | null;
   isLoading: boolean;
   importLogs: any[];
@@ -81,6 +84,8 @@ interface AppState {
   clearAllData: () => Promise<void>;
   deleteUpload: (id: string) => Promise<void>;
   deleteCollaborator: (name: string) => Promise<void>;
+  toggleRowExclusion: (rowId: string, exclude: boolean, reason?: string) => Promise<void>;
+  updateRowNote: (rowId: string, note: string) => Promise<void>;
   updateCollaboratorAvatar: (name: string, avatarUrl: string, options?: any) => Promise<void>;
   updateCollaboratorBadges: (name: string, badges: string[]) => Promise<void>;
   updateCollaboratorGoals: (name: string, goals: any[]) => Promise<void>;
@@ -237,6 +242,26 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
   const [error, setError] = useState<string | null>(null);
   const [avatarMap, setAvatarMap] = useState<Map<string, { url: string, options: any, badges?: string[], goals?: any[] }>>(new Map());
   
+  const [columnFilters, setColumnFilters] = useState({
+    collaborators: [] as string[],
+    clients: [] as string[],
+    rating: null as number | null,
+    messagesMin: null as number | null
+  });
+
+  const setColumnFilter = (key: string, value: any) => {
+    setColumnFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const clearColumnFilters = () => {
+    setColumnFilters({
+      collaborators: [],
+      clients: [],
+      rating: null,
+      messagesMin: null
+    });
+  };
+
   const [user, setUser] = useState<any | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userPermissions, setUserPermissions] = useState<UserPermissions | null>(null);
@@ -775,7 +800,10 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
         uploadId: d.upload_id,
         isExcluded: d.is_excluded,
         exclusionReason: d.exclusion_reason,
-        rawData: d.raw_data
+        rawData: d.raw_data,
+        notes: d.notes,
+        duracaoSegundos: d.duracao_segundos,
+        tempoRespostaSegundos: d.tempo_resposta_segundos
       }));
 
       setRawRows(formattedData);
@@ -851,6 +879,20 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
                      String(val).toLowerCase().includes(searchTerm.toLowerCase());
             });
           
+          // Apply column filters
+          if (columnFilters.collaborators.length > 0 && !columnFilters.collaborators.includes(row.colaborador)) {
+            return false;
+          }
+          if (columnFilters.clients.length > 0 && !columnFilters.clients.includes(row.cliente)) {
+            return false;
+          }
+          if (columnFilters.rating !== null && row.avaliacao !== columnFilters.rating) {
+            return false;
+          }
+          if (columnFilters.messagesMin !== null && row.mensagens < columnFilters.messagesMin) {
+            return false;
+          }
+          
           if (filterStatus === 'included') return !row.isExcluded && matchesSearch;
           if (filterStatus === 'excluded') return row.isExcluded && matchesSearch;
           return matchesSearch;
@@ -891,7 +933,7 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
         selectedRows: finalFilteredData // Use filtered data that respects search and status filters
       };
 
-    }, [rawRows, avatarMap, searchTerm, filterStatus, dateFilter, dateRange, pointsConfig]);
+    }, [rawRows, avatarMap, searchTerm, filterStatus, dateFilter, dateRange, pointsConfig, columnFilters]);
 
   useEffect(() => {
     setCollaborators(calculatedCollaborators);
@@ -1132,7 +1174,8 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
               agente_encerrou_em: d.agenteEncerrouEm ? d.agenteEncerrouEm.toISOString() : null,
               duracao_conversa_segundos: d.duracaoSegundos || null,
               tempo_inicial_resposta_segundos: d.tempoRespostaSegundos || null,
-              avaliado_pelos_clientes: d.avaliadoPelosClientes || null
+              avaliado_pelos_clientes: d.avaliadoPelosClientes || null,
+              notes: d.notes || null
             };
           });
 
@@ -1682,6 +1725,50 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
 
   const clearError = () => setError(null);
 
+  const toggleRowExclusion = async (rowId: string, exclude: boolean, reason?: string) => {
+    const supabaseClient = supabase;
+
+    if (!isSupabaseConfigured || !supabaseClient) {
+      setRawRows(prev => prev.map(r => r.id === rowId ? { ...r, isExcluded: exclude, exclusionReason: reason } : r));
+      return;
+    }
+
+    try {
+      const { error } = await supabaseClient
+        .from('support_data')
+        .update({ is_excluded: exclude, exclusion_reason: reason })
+        .eq('id', rowId);
+
+      if (error) throw error;
+      await refreshData();
+    } catch (err: any) {
+      logError('Error toggling row exclusion:', err);
+      setError(`Erro ao ${exclude ? 'excluir' : 'restaurar'} item: ${err?.message}`);
+    }
+  };
+
+  const updateRowNote = async (rowId: string, note: string) => {
+    const supabaseClient = supabase;
+
+    if (!isSupabaseConfigured || !supabaseClient) {
+      setRawRows(prev => prev.map(r => r.id === rowId ? { ...r, notes: note } : r));
+      return;
+    }
+
+    try {
+      const { error } = await supabaseClient
+        .from('support_data')
+        .update({ notes: note })
+        .eq('id', rowId);
+
+      if (error) throw error;
+      await refreshData();
+    } catch (err: any) {
+      logError('Error updating row note:', err);
+      setError(`Erro ao salvar nota: ${err?.message}`);
+    }
+  };
+
   const resetData = () => {
     setRawRows([]);
     setCollaborators([]);
@@ -1762,6 +1849,9 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
         customRange,
         setCustomRange,
         dateRange,
+        columnFilters,
+        setColumnFilter,
+        clearColumnFilters,
         error,
         bitrixTickets,
         odooTickets,
@@ -1773,6 +1863,8 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
         clearAllData,
         deleteUpload,
         deleteCollaborator,
+        toggleRowExclusion,
+        updateRowNote,
         updateCollaboratorAvatar,
         updateCollaboratorBadges,
         updateCollaboratorGoals,

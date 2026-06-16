@@ -28,6 +28,7 @@ export interface SupportData {
   duracaoSegundos?: number | null;
   tempoRespostaSegundos?: number | null;
   avaliadoPelosClientes?: string | null;
+  notes?: string | null;
 }
 
 export interface ProcessedResult {
@@ -196,6 +197,24 @@ export const normalize = (s: string) => {
   
   // First clean the string from encoding artifacts
   let normalized = cleanHeader(String(s));
+  
+  // Convert Cyrillic characters to Latin equivalents for matching
+  // С (U+0421) -> C, о (U+043E) -> o, л (U+043B) -> l, etc.
+  const cyrillicMap: Record<string, string> = {
+    '\u0421': 'C', // Cyrillic С
+    '\u043E': 'o', // Cyrillic о
+    '\u043B': 'l', // Cyrillic л
+    '\u0430': 'a', // Cyrillic а
+    '\u0432': 'v', // Cyrillic в
+    '\u0438': 'i', // Cyrillic и
+    '\u0440': 'p', // Cyrillic р
+    '\u043D': 'n', // Cyrillic н
+    '\u0434': 'd', // Cyrillic д
+    '\u0442': 't', // Cyrillic т
+    '\u043C': 'm', // Cyrillic м
+    '\u043A': 'k', // Cyrillic к
+  };
+  normalized = normalized.replace(/[\u0400-\u04FF]/g, char => cyrillicMap[char] || char);
   
   normalized = normalized.toLowerCase();
   
@@ -669,8 +688,13 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
               if (usedKeys.has(k)) return false;
               const nk = normalize(k);
               if (!nk || nk.length < 3) return false;
-              // Special case for "Colaborador" which often gets corrupted at the start
-              if (target === 'colaborador' && (nk.endsWith('olaborador') || nk.endsWith('laborador') || nk.includes('agente'))) return true;
+// Special case for "Colaborador" which often gets corrupted at the start
+               // Exclude timestamp columns with 'agente' (encerrou/respondeu) - they should NOT map to colaborador
+               if (target === 'colaborador' && (nk.endsWith('olaborador') || nk.endsWith('laborador') || nk.includes('agente'))) {
+                 // Skip if it's a timestamp column (encerrou/respondeu em)
+                 if (nk.includes('encerrou') || nk.includes('respondeu')) return false;
+                 return true;
+               }
               return nk.includes(normalizedVariation) || normalizedVariation.includes(nk);
             });
 
@@ -723,7 +747,10 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
           }
           if (count > 0) {
             const avg = sum / count;
-            if (avg < 20) return false; // If average is small, it's likely minutes
+            // Typical response time: if avg > 60, likely seconds (large values). If avg < 5, likely seconds (small response times).
+            // If 5-60, ambiguous - default to seconds for safety
+            if (avg > 60) return true; // Large values are almost always seconds
+            if (avg < 5) return true; // Small values are response times in seconds
           }
           return true; // Default to seconds
         };
@@ -880,6 +907,22 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
             data: finalDate || undefined
           });
 
+          // Extract raw seconds values for display in raw data view
+          let rawDuracaoSegundos: number | null = null;
+          let rawTempoRespostaSegundos: number | null = null;
+          if (detectedColumns['duracao']) {
+            const rawDuracao = val('duracao');
+            if (rawDuracao !== undefined && rawDuracao !== null && String(rawDuracao).trim() !== '' && String(rawDuracao).trim() !== '-') {
+              rawDuracaoSegundos = duracaoInSeconds ? parseFloat(String(rawDuracao).replace(',', '.')) : parseFloat(String(rawDuracao).replace(',', '.')) * 60;
+            }
+          }
+          if (detectedColumns['tempoResposta']) {
+            const rawTempo = val('tempoResposta');
+            if (rawTempo !== undefined && rawTempo !== null && String(rawTempo).trim() !== '' && String(rawTempo).trim() !== '-') {
+              rawTempoRespostaSegundos = tempoInSeconds ? parseFloat(String(rawTempo).replace(',', '.')) : parseFloat(String(rawTempo).replace(',', '.')) * 60;
+            }
+          }
+
           return {
             id: rowId,
             colaborador: collabName,
@@ -894,6 +937,8 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
             slaDeadline,
             isExcluded,
             exclusionReason,
+            duracaoSegundos: rawDuracaoSegundos,
+            tempoRespostaSegundos: rawTempoRespostaSegundos,
             rawData: { ...row },
             source: 'chat',
             sourceFile: filename,
@@ -984,14 +1029,15 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
   const speedUnder3mWeight = config?.speedUnder3m !== undefined ? config.speedUnder3m : 0.5;
   const speedOver3mWeight = config?.speedOver3m !== undefined ? config.speedOver3m : -1;
 
-  const collabMap = new Map<string, { 
-    ratings: number[], 
-    times: number[], 
-    duracoes: number[], 
-    count: number, 
-    points: number,
-    breakdown: PointsBreakdown
-  }>();
+const collabMap = new Map<string, { 
+     ratings: number[], 
+     times: number[], 
+     duracoes: number[], 
+     count: number, 
+     evaluationCount: number,
+     points: number,
+     breakdown: PointsBreakdown
+   }>();
   const customerMap = new Map<string, { count: number, evaluations: number }>();
   const hourlyMap = new Map<number, number>();
   for (let i = 0; i < 24; i++) hourlyMap.set(i, 0);
@@ -1025,24 +1071,24 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
   filteredData.forEach(d => {
     // Collaborator stats
     if (!collabMap.has(d.colaborador)) {
-      collabMap.set(d.colaborador, { 
-        ratings: [], times: [], duracoes: [], count: 0, points: 0,
-        breakdown: {
-          volume: { count: 0, points: 0 },
-          quality: {
-            fiveStars: { count: 0, points: 0 },
-            oneStar: { count: 0, points: 0 },
-            other: { count: 0, points: 0 }
-          },
-          speed: {
-            under1m: { count: 0, points: 0 },
-            under3m: { count: 0, points: 0 },
-            over3m: { count: 0, points: 0 }
-          },
-          responseRateBonus: { bonusPoints: 0 },
-          total: 0
-        }
-      });
+collabMap.set(d.colaborador, { 
+         ratings: [], times: [], duracoes: [], count: 0, evaluationCount: 0, points: 0,
+         breakdown: {
+           volume: { count: 0, points: 0 },
+           quality: {
+             fiveStars: { count: 0, points: 0 },
+             oneStar: { count: 0, points: 0 },
+             other: { count: 0, points: 0 }
+           },
+           speed: {
+             under1m: { count: 0, points: 0 },
+             under3m: { count: 0, points: 0 },
+             over3m: { count: 0, points: 0 }
+           },
+           responseRateBonus: { bonusPoints: 0 },
+           total: 0
+         }
+       });
     }
     const stats = collabMap.get(d.colaborador)!;
     
@@ -1065,6 +1111,7 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
 
     // 2. Quality Points
     if (d.avaliacao > 0) {
+      stats.evaluationCount++;
       for (let i = 0; i < d.atendimentos; i++) {
         stats.ratings.push(d.avaliacao);
       }
@@ -1126,7 +1173,7 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
 
   const collaborators: CollaboratorStats[] = Array.from(collabMap.entries()).map(([name, stats]) => {
     const totalAtendimentosWithRating = stats.ratings.length;
-    const totalEvaluations = stats.ratings.length;
+    const totalEvaluations = stats.evaluationCount;
     const responseRate = stats.count > 0 ? (totalEvaluations / stats.count) * 100 : 0;
     const avgRating = totalAtendimentosWithRating > 0 ? stats.ratings.reduce((a, b) => a + b, 0) / totalAtendimentosWithRating : 0;
     

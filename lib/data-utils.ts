@@ -28,6 +28,7 @@ export interface SupportData {
   duracaoSegundos?: number | null;
   tempoRespostaSegundos?: number | null;
   avaliadoPelosClientes?: string | null;
+  notes?: string | null;
 }
 
 export interface ProcessedResult {

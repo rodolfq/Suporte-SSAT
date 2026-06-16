@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Search, Calendar, ChevronDown, XCircle, Filter } from 'lucide-react';
+import { Search, Calendar, ChevronDown, XCircle, Filter, User } from 'lucide-react';
 import { useApp } from '@/context/app-context';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -9,9 +9,10 @@ import { format } from 'date-fns';
 interface FilterBarProps {
   showStatusFilter?: boolean;
   placeholder?: string;
+  showAdvancedFilters?: boolean;
 }
 
-export default function FilterBar({ showStatusFilter = true, placeholder = "Buscar..." }: FilterBarProps) {
+export default function FilterBar({ showStatusFilter = true, placeholder = "Buscar...", showAdvancedFilters = false }: FilterBarProps) {
   const {
     searchTerm,
     setSearchTerm,
@@ -21,10 +22,25 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
     setDateFilter,
     customRange,
     setCustomRange,
-    dateRange
+    dateRange,
+    collaborators,
+    selectedRows,
+    columnFilters,
+    setColumnFilter,
+    clearColumnFilters
   } = useApp();
 
   const [isDateOpen, setIsDateOpen] = useState(false);
+  const [isCollaboratorOpen, setIsCollaboratorOpen] = useState(false);
+  const [isClientOpen, setIsClientOpen] = useState(false);
+  const [isRatingOpen, setIsRatingOpen] = useState(false);
+
+  const ratingOptions = [
+    { value: 5, label: 'Avaliou positivo' },
+    { value: 1, label: 'Avaliou negativo' },
+    { value: 0, label: 'Não avaliou' }
+  ];
+  const [isMessagesOpen, setIsMessagesOpen] = useState(false);
 
   const dateOptions = [
     { id: 'all', label: 'Todo o Período' },
@@ -37,13 +53,16 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
     { id: 'custom', label: 'Personalizado' },
   ];
 
-  const hasActiveFilters = searchTerm || filterStatus !== 'all' || dateFilter !== 'all';
+  const hasActiveFilters = searchTerm || filterStatus !== 'all' || dateFilter !== 'all' ||
+    columnFilters.collaborators.length > 0 || columnFilters.clients.length > 0 ||
+    columnFilters.rating !== null || columnFilters.messagesMin !== null;
 
   const clearFilters = () => {
     setSearchTerm('');
     setFilterStatus('all');
     setDateFilter('all');
     setCustomRange({ start: '', end: '' });
+    clearColumnFilters();
   };
 
   return (
@@ -178,6 +197,249 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
           >
             <XCircle className="w-5 h-5" />
           </button>
+        )}
+
+        {/* Advanced Column Filters - Only shown on Raw Data View */}
+        {showAdvancedFilters && (
+          <>
+            <div className="hidden md:flex items-center gap-2 ml-2">
+              <div className="relative">
+                <button
+                  onClick={() => setIsCollaboratorOpen(!isCollaboratorOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-primary transition-all text-xs font-bold"
+                >
+                  <User className="w-3 h-3 text-primary" />
+                  <span className="text-slate-700 dark:text-slate-300">
+                    {columnFilters.collaborators.length > 0 ? `${columnFilters.collaborators.length} colaborador(es)` : 'Colaborador'}
+                  </span>
+                  {columnFilters.collaborators.length > 0 && (
+                    <span className="ml-1 bg-primary text-white w-4 h-4 rounded-full text-[9px] flex items-center justify-center">
+                      {columnFilters.collaborators.length}
+                    </span>
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {isCollaboratorOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsCollaboratorOpen(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute left-0 mt-2 w-64 max-h-60 overflow-y-auto bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2"
+                      >
+                        <div className="space-y-1">
+                          {collaborators.map((collab) => (
+                            <label
+                              key={collab.name}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={columnFilters.collaborators.includes(collab.name)}
+                                onChange={() => {
+                                  const newFilters = columnFilters.collaborators.includes(collab.name)
+                                    ? columnFilters.collaborators.filter(n => n !== collab.name)
+                                    : [...columnFilters.collaborators, collab.name];
+                                  setColumnFilter('collaborators', newFilters);
+                                }}
+                                className="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary w-3 h-3"
+                              />
+                              <span className="text-xs text-slate-700 dark:text-slate-300">{collab.name}</span>
+                            </label>
+                          ))}
+                          {collaborators.length === 0 && (
+                            <p className="text-xs text-slate-400 italic px-3 py-1">Nenhum colaborador encontrado</p>
+                          )}
+                        </div>
+                        {columnFilters.collaborators.length > 0 && (
+                          <button
+                            onClick={() => setColumnFilter('collaborators', [])}
+                            className="mt-2 w-full text-center text-[10px] text-rose-500 hover:underline"
+                          >
+                            Limpar seleção
+                          </button>
+                        )}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="relative">
+                <button
+                  onClick={() => setIsClientOpen(!isClientOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-primary transition-all text-xs font-bold"
+                >
+                  <span className="text-slate-700 dark:text-slate-300">
+                    {columnFilters.clients.length > 0 ? `${columnFilters.clients.length} cliente(s)` : 'Cliente'}
+                  </span>
+                  {columnFilters.clients.length > 0 && (
+                    <span className="ml-1 bg-primary text-white w-4 h-4 rounded-full text-[9px] flex items-center justify-center">
+                      {columnFilters.clients.length}
+                    </span>
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {isClientOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsClientOpen(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute left-0 mt-2 w-64 max-h-60 overflow-y-auto bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2"
+                      >
+                        <div className="space-y-1">
+                          {Array.from(new Set(selectedRows.map(r => r.cliente).filter(Boolean)).values()).map((client) => (
+                            <label
+                              key={client}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={columnFilters.clients.includes(client)}
+                                onChange={() => {
+                                  const newFilters = columnFilters.clients.includes(client)
+                                    ? columnFilters.clients.filter(n => n !== client)
+                                    : [...columnFilters.clients, client];
+                                  setColumnFilter('clients', newFilters);
+                                }}
+                                className="rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary w-3 h-3"
+                              />
+                              <span className="text-xs text-slate-700 dark:text-slate-300 truncate">{client}</span>
+                            </label>
+                          ))}
+                          {selectedRows.filter(r => r.cliente).length === 0 && (
+                            <p className="text-xs text-slate-400 italic px-3 py-1">Nenhum cliente encontrado</p>
+                          )}
+                        </div>
+                        {columnFilters.clients.length > 0 && (
+                          <button
+                            onClick={() => setColumnFilter('clients', [])}
+                            className="mt-2 w-full text-center text-[10px] text-rose-500 hover:underline"
+                          >
+                            Limpar seleção
+                          </button>
+                        )}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="relative">
+                <button
+                  onClick={() => setIsRatingOpen(!isRatingOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-primary transition-all text-xs font-bold"
+                >
+                  <span className="text-slate-700 dark:text-slate-300">
+                    {columnFilters.rating === 5 ? 'Positivo' : columnFilters.rating === 1 ? 'Negativo' : columnFilters.rating === 0 ? 'Sem av.' : 'Avaliação'}
+                  </span>
+                </button>
+
+                <AnimatePresence>
+                  {isRatingOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsRatingOpen(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute left-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2"
+                      >
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => setColumnFilter('rating', 5)}
+                            className={`p-2 rounded-lg text-xs font-bold transition-all flex items-center justify-start gap-2 ${
+                              columnFilters.rating === 5
+                                ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                                : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            Avaliou positivo
+                          </button>
+                          <button
+                            onClick={() => setColumnFilter('rating', 1)}
+                            className={`p-2 rounded-lg text-xs font-bold transition-all flex items-center justify-start gap-2 ${
+                              columnFilters.rating === 1
+                                ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300'
+                                : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            <span className="w-2 h-2 rounded-full bg-rose-500" />
+                            Avaliou negativo
+                          </button>
+                          <button
+                            onClick={() => setColumnFilter('rating', 0)}
+                            className={`p-2 rounded-lg text-xs font-bold transition-all flex items-center justify-start gap-2 ${
+                              columnFilters.rating === 0
+                                ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                                : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            <span className="w-2 h-2 rounded-full bg-slate-400" />
+                            Não avaliou
+                          </button>
+                        </div>
+                        {columnFilters.rating !== null && (
+                          <button
+                            onClick={() => setColumnFilter('rating', null)}
+                            className="mt-2 w-full text-center text-[10px] text-rose-500 hover:underline"
+                          >
+                            Limpar
+                          </button>
+                        )}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="relative">
+                <button
+                  onClick={() => setIsMessagesOpen(!isMessagesOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-primary transition-all text-xs font-bold"
+                >
+                  <span className="text-slate-700 dark:text-slate-300">
+                    {columnFilters.messagesMin ? `${columnFilters.messagesMin}+ msgs` : 'Mensagens'}
+                  </span>
+                </button>
+
+                <AnimatePresence>
+                  {isMessagesOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsMessagesOpen(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute left-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-3"
+                      >
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="Mínimo"
+                          value={columnFilters.messagesMin ?? ''}
+                          onChange={(e) => setColumnFilter('messagesMin', e.target.value ? Number(e.target.value) : null)}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs focus:ring-2 focus:ring-primary/20 outline-none dark:text-slate-100"
+                        />
+                        <button
+                          onClick={() => setColumnFilter('messagesMin', null)}
+                          className="mt-2 w-full text-center text-[10px] text-rose-500 hover:underline"
+                        >
+                          Limpar
+                        </button>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+          </>
         )}
       </div>
 

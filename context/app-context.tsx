@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
-import { SupportData, CollaboratorStats, DashboardStats, calculateStats, RawSpreadsheetRow, RankingPointsConfig } from '@/lib/data-utils';
+import { SupportData, CollaboratorStats, DashboardStats, calculateStats, RawSpreadsheetRow, RankingPointsConfig, isRowExcluded } from '@/lib/data-utils';
 import { supabase } from '@/lib/supabase';
 import { 
   startOfDay, 
@@ -800,8 +800,8 @@ const clearColumnFilters = () => {
         stage: d.stage,
         slaDeadline: d.sla_deadline ? new Date(d.sla_deadline) : null,
         uploadId: d.upload_id,
-        isExcluded: d.is_excluded,
-        exclusionReason: d.exclusion_reason,
+        isExcluded: (d.is_excluded !== undefined && d.is_excluded !== null) ? d.is_excluded : isRowExcluded({ mensagens: Number(d.mensagens || 0), colaborador: d.colaborador, data: new Date(d.data) }).isExcluded,
+        exclusionReason: d.exclusion_reason || (d.is_excluded === undefined || d.is_excluded === null ? isRowExcluded({ mensagens: Number(d.mensagens || 0), colaborador: d.colaborador, data: new Date(d.data) }).reason : undefined),
         rawData: d.raw_data,
         notes: d.notes,
         duracaoSegundos: d.duracao_segundos,

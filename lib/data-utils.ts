@@ -955,6 +955,11 @@ export function isRowExcluded(row: Partial<SupportData>): { isExcluded: boolean;
     return { isExcluded: true, reason: 'Sem mensagens' };
   }
   
+  // RULE: Discard records with less than 3 messages
+  if (numMensagens < 3) {
+    return { isExcluded: true, reason: 'Menos de 3 mensagens' };
+  }
+  
   // RULE: Discard records with invalid or missing date ("Criado em")
   if (!rowDate || isNaN(rowDate.getTime()) || rowDate.getTime() === 0) {
     return { isExcluded: true, reason: 'Data inválida' };
@@ -1017,6 +1022,9 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
     const lowerName = name.toLowerCase();
     if (['undefined', 'null', 'invalido', 'inválido'].includes(lowerName)) return false;
     if (['total', 'média', 'media', 'grand total', 'subtotal', 'resultado'].some(f => lowerName.includes(f))) return false;
+
+    // Check messages < 3
+    if ((d.mensagens || 0) < 3) return false;
 
     // Finally check the general exclusion logic
     const { isExcluded } = isRowExcluded(d);

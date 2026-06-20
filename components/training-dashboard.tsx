@@ -283,7 +283,7 @@ export default function TrainingDashboard() {
         toolsApproved,
         failureTickets
       };
-    }).sort((a, b) => b.totalMinutes - a.totalMinutes || b.realizedTrainings - a.realizedTrainings || a.name.localeCompare(b.name));
+    }).sort((a, b) => b.realizedTrainings - a.realizedTrainings || b.totalTrainings - a.totalTrainings || a.name.localeCompare(b.name));
   }, [trainersList, filteredPoints, filtroTreinador]);
 
   // Compute map to 5 charts

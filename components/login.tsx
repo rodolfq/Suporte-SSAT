@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogIn, Mail, Lock, AlertCircle, Loader2, CheckCircle2, ArrowLeft } from 'lucide-react';
 
+
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

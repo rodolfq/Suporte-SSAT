@@ -26,6 +26,15 @@ export interface LancamentoPonto {
     dataLancamento: number;
     criadoPorId: string;
     criadoPorNome: string;
+    // Campos adicionais de treinamento
+    treinamentoEmpresa?: string;
+    treinamentoTema?: string;
+    treinamentoDataSolicitacao?: string;
+    treinamentoDataRealizacao?: string;
+    treinamentoTempoAgenda?: string;
+    treinamentoSolicitante?: string;
+    treinamentoNotas?: number[];
+    treinamentoNotaMedia?: number | null;
 }
 
 // Busca todos os lançamentos de pontos

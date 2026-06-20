@@ -12,7 +12,9 @@ import {
   PieChart as PieChartIcon,
   BarChart3,
   Trophy,
-  Database
+  Database,
+  Calendar,
+  Filter
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -28,11 +30,95 @@ import {
   Legend
 } from 'recharts';
 
+// Helper functions for parsing durations and waiting times
+const parseTimeToMinutes = (timeStr?: string) => {
+  if (!timeStr) return 0;
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  if (isNaN(hours) || isNaN(minutes)) return 0;
+  return hours * 60 + minutes;
+};
+
+const formatMinutes = (totalMinutes: number) => {
+  if (totalMinutes <= 0) return '0m';
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+};
+
+const parseDateStr = (dateStr?: string) => {
+  if (!dateStr) return null;
+  const parts = dateStr.split('-').map(Number);
+  if (parts.length !== 3) return null;
+  const [year, month, day] = parts;
+  const d = new Date(year, month - 1, day);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const getDaysBetween = (d1Str?: string, d2Str?: string) => {
+  const d1 = parseDateStr(d1Str);
+  const d2 = parseDateStr(d2Str);
+  if (!d1 || !d2) return null;
+  const diffTime = d2.getTime() - d1.getTime();
+  return Math.round(diffTime / (1000 * 60 * 60 * 24));
+};
+
+interface CustomRechartsBarChartProps {
+  title: string;
+  data: any[];
+  dataKey: string;
+  fill: string;
+  name: string;
+  yAxisLabel?: string;
+}
+
+function CustomRechartsBarChart({ title, data, dataKey, fill, name, yAxisLabel }: CustomRechartsBarChartProps) {
+  return (
+    <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+      <h3 className="text-base font-bold dark:text-slate-100 mb-4">{title}</h3>
+      <div className="h-[240px]">
+        {data.length === 0 || !data.some(d => d[dataKey] > 0) ? (
+          <div className="h-full flex items-center justify-center text-slate-400 italic text-sm">
+            Sem dados no período
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--grid-color, #f1f5f9)" />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 600, fill: '#64748b' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip
+                contentStyle={{
+                  borderRadius: '16px',
+                  border: 'none',
+                  boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                  backgroundColor: '#0f2a5e',
+                  color: '#fff'
+                }}
+                labelStyle={{ fontWeight: 800, color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px', marginBottom: '4px' }}
+                itemStyle={{ color: '#fff', fontWeight: 600 }}
+              />
+              <Bar dataKey={dataKey} name={name} fill={fill} radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TrainingDashboard() {
   const [gamificationPoints, setGamificationPoints] = useState<LancamentoPonto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
+
+  // Filter States
+  const [filtroPeriodo, setFiltroPeriodo] = useState<string>('all');
+  const [dataInicio, setDataInicio] = useState<string>('');
+  const [dataFim, setDataFim] = useState<string>('');
+  const [filtroTreinador, setFiltroTreinador] = useState<string>('all');
 
   const onPieEnter = useCallback((_: any, index: number) => {
     setActivePieIndex(index);
@@ -61,11 +147,192 @@ export default function TrainingDashboard() {
 
   useEffect(() => {
     refreshData();
-    // Polling every 1 minute
     const interval = setInterval(refreshData, 60000);
     return () => clearInterval(interval);
   }, [refreshData]);
 
+  // Extract active trainers
+  const trainersList = useMemo(() => {
+    const names = new Set<string>();
+    gamificationPoints.forEach(p => {
+      if (p.treinadorNome) {
+        names.add(p.treinadorNome);
+      }
+    });
+    return Array.from(names).sort();
+  }, [gamificationPoints]);
+
+  // Filter points based on the period filter
+  const filteredPoints = useMemo(() => {
+    const now = new Date();
+    return gamificationPoints.filter((p) => {
+      if (!p.dataLancamento) return false;
+      const date = new Date(p.dataLancamento);
+
+      switch (filtroPeriodo) {
+        case '7days': {
+          const diffTime = now.getTime() - date.getTime();
+          const diffDays = diffTime / (1000 * 60 * 60 * 24);
+          return diffDays >= 0 && diffDays <= 7;
+        }
+        case '30days': {
+          const diffTime = now.getTime() - date.getTime();
+          const diffDays = diffTime / (1000 * 60 * 60 * 24);
+          return diffDays >= 0 && diffDays <= 30;
+        }
+        case 'thisMonth': {
+          return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+        }
+        case 'lastMonth': {
+          const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+          const yearOfPrevMonth = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+          return date.getFullYear() === yearOfPrevMonth && date.getMonth() === prevMonth;
+        }
+        case 'custom': {
+          if (!dataInicio && !dataFim) return true;
+          const start = dataInicio ? new Date(dataInicio + 'T00:00:00') : new Date(0);
+          const end = dataFim ? new Date(dataFim + 'T23:59:59') : new Date();
+          return date >= start && date <= end;
+        }
+        case 'all':
+        default:
+          return true;
+      }
+    });
+  }, [gamificationPoints, filtroPeriodo, dataInicio, dataFim]);
+
+  // Process stats for all trainers under current active range
+  const trainersStats = useMemo(() => {
+    const targetTrainers = filtroTreinador === 'all'
+      ? trainersList
+      : trainersList.filter(name => name === filtroTreinador);
+
+    return targetTrainers.map(name => {
+      const trainerPoints = filteredPoints.filter(p => p.treinadorNome === name);
+
+      // Total trainings
+      const trainings = trainerPoints.filter(p => p.tipoAcao === 'treinamento');
+      const totalTrainings = trainings.length;
+
+      // Cancelled
+      const cancelledTrainings = trainings.filter(p => 
+        p.treinamentoTema && 
+        (p.treinamentoTema.toLowerCase() === 'cancelado' || p.treinamentoTema.toLowerCase() === 'ausente')
+      ).length;
+
+      // Realized
+      const realizedTrainings = totalTrainings - cancelledTrainings;
+
+      // Total time in minutes
+      let totalMinutes = 0;
+      trainings.forEach(p => {
+        const isCancelled = p.treinamentoTema && (p.treinamentoTema.toLowerCase() === 'cancelado' || p.treinamentoTema.toLowerCase() === 'ausente');
+        if (!isCancelled && p.treinamentoTempoAgenda) {
+          totalMinutes += parseTimeToMinutes(p.treinamentoTempoAgenda);
+        }
+      });
+
+      // TME (Average waiting time in days)
+      let sumDays = 0;
+      let countDays = 0;
+      trainings.forEach(p => {
+        const isCancelled = p.treinamentoTema && (p.treinamentoTema.toLowerCase() === 'cancelado' || p.treinamentoTema.toLowerCase() === 'ausente');
+        if (!isCancelled && p.treinamentoDataSolicitacao && p.treinamentoDataRealizacao) {
+          const days = getDaysBetween(p.treinamentoDataSolicitacao, p.treinamentoDataRealizacao);
+          if (days !== null) {
+            sumDays += days;
+            countDays++;
+          }
+        }
+      });
+      const tme = countDays > 0 ? parseFloat((sumDays / countDays).toFixed(1)) : null;
+
+      // TMT (Average duration in minutes)
+      const tmt = realizedTrainings > 0 ? Math.round(totalMinutes / realizedTrainings) : null;
+
+      // Average CSAT Score
+      let sumScore = 0;
+      let countScore = 0;
+      trainings.forEach(p => {
+        if (p.tipoAcao === 'treinamento' && typeof p.treinamentoNotaMedia === 'number') {
+          sumScore += p.treinamentoNotaMedia;
+          countScore++;
+        }
+      });
+      const mediaScore = countScore > 0 ? parseFloat((sumScore / countScore).toFixed(2)) : null;
+
+      // Other actions
+      const approvedDocs = trainerPoints.filter(p => p.tipoAcao === 'nova_doc').length;
+      const attDocs = trainerPoints.filter(p => p.tipoAcao === 'att_doc').length;
+      const toolsApproved = trainerPoints.filter(p => p.tipoAcao === 'ferramenta_aut').length;
+      const failureTickets = trainerPoints.filter(p => p.tipoAcao === 'chamado_falha').length;
+
+      return {
+        name,
+        totalTrainings,
+        cancelledTrainings,
+        realizedTrainings,
+        totalMinutes,
+        totalTimeFormatted: formatMinutes(totalMinutes),
+        tme,
+        tmt,
+        tmtFormatted: tmt ? formatMinutes(tmt) : '-',
+        mediaScore,
+        approvedDocs,
+        attDocs,
+        toolsApproved,
+        failureTickets
+      };
+    }).sort((a, b) => b.realizedTrainings - a.realizedTrainings || a.name.localeCompare(b.name));
+  }, [trainersList, filteredPoints, filtroTreinador]);
+
+  // Compute map to 5 charts
+  const chartMediaScore = useMemo(() => {
+    return trainersStats
+      .filter(t => t.mediaScore !== null)
+      .map(t => ({
+        name: t.name.split(' ')[0],
+        value: t.mediaScore || 0
+      }));
+  }, [trainersStats]);
+
+  const chartApprovedDocs = useMemo(() => {
+    return trainersStats.map(t => ({
+      name: t.name.split(' ')[0],
+      value: t.approvedDocs
+    }));
+  }, [trainersStats]);
+
+  const chartAttDocs = useMemo(() => {
+    return trainersStats.map(t => ({
+      name: t.name.split(' ')[0],
+      value: t.attDocs
+    }));
+  }, [trainersStats]);
+
+  const chartToolsApproved = useMemo(() => {
+    return trainersStats.map(t => ({
+      name: t.name.split(' ')[0],
+      value: t.toolsApproved
+    }));
+  }, [trainersStats]);
+
+  const chartFailureTickets = useMemo(() => {
+    return trainersStats.map(t => ({
+      name: t.name.split(' ')[0],
+      value: t.failureTickets
+    }));
+  }, [trainersStats]);
+
+  // Filtered points specifically for the standard/ranking stats
+  const filteredPointsForStats = useMemo(() => {
+    if (filtroTreinador === 'all') {
+      return filteredPoints;
+    }
+    return filteredPoints.filter(p => p.treinadorNome === filtroTreinador);
+  }, [filteredPoints, filtroTreinador]);
+
+  // Dynamic Dashboard Stats
   const dashboardStats = useMemo(() => {
     let totalPoints = 0;
     let totalTrainings = 0;
@@ -91,8 +358,7 @@ export default function TrainingDashboard() {
       failuresCount: number;
     }> = {};
 
-    // Accumulate points and action counts from Firestore
-    gamificationPoints.forEach(p => {
+    filteredPointsForStats.forEach(p => {
       const nameKey = p.treinadorNome.split(' ')[0].toLowerCase();
       const actionPoints = POINTS_MAP[p.tipoAcao] ?? p.pontos ?? 0;
 
@@ -136,8 +402,8 @@ export default function TrainingDashboard() {
 
     const actionCounts: Record<string, number> = {
       treinamento: totalTrainings,
-      nova_doc: gamificationPoints.filter(p => p.tipoAcao === 'nova_doc').length,
-      att_doc: gamificationPoints.filter(p => p.tipoAcao === 'att_doc').length,
+      nova_doc: filteredPointsForStats.filter(p => p.tipoAcao === 'nova_doc').length,
+      att_doc: filteredPointsForStats.filter(p => p.tipoAcao === 'att_doc').length,
       ferramenta_aut: totalTools,
       chamado_falha: totalFailures
     };
@@ -156,7 +422,7 @@ export default function TrainingDashboard() {
       ranking,
       distribution
     };
-  }, [gamificationPoints]);
+  }, [filteredPointsForStats]);
 
   const CustomPieTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -184,7 +450,6 @@ export default function TrainingDashboard() {
     const x = cx + radius * Math.cos(-midAngle * RADIAN);
     const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
-    // Só exibe a label se for maior que 5% para não encavalar
     if (!percent || percent < 0.05) return null;
 
     return (
@@ -249,20 +514,167 @@ export default function TrainingDashboard() {
       )}
 
       {!isLoading && gamificationPoints.length > 0 && (
-        <div className="space-y-8">
-          {/* Top Indicators */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {/* Total Points */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex justify-between items-start mb-4">
-                <div className="p-2 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-xl">
-                  <Trophy className="w-5 h-5" />
+        <div className="space-y-8 animate-in fade-in duration-200">
+          
+          {/* Seção 1: Filtros do Painel */}
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-bold border-b border-slate-100 dark:border-slate-800 pb-3">
+              <Filter className="w-5 h-5 text-indigo-600" />
+              <h2>Filtros de Período e Treinador</h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Período de Lançamento</label>
+                <div className="relative flex items-center">
+                  <Calendar className="absolute left-3 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <select
+                    value={filtroPeriodo}
+                    onChange={(e) => setFiltroPeriodo(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 text-sm font-medium text-slate-700 dark:text-slate-300 outline-none focus:border-primary transition-all appearance-none"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
+                      backgroundRepeat: 'no-repeat',
+                      backgroundPosition: 'right 12px center',
+                      backgroundSize: '14px'
+                    }}
+                  >
+                    <option value="all">Todo o Período</option>
+                    <option value="7days">Últimos 7 dias</option>
+                    <option value="30days">Últimos 30 dias</option>
+                    <option value="thisMonth">Este Mês</option>
+                    <option value="lastMonth">Mês Passado</option>
+                    <option value="custom">Personalizado</option>
+                  </select>
                 </div>
               </div>
-              <p className="text-3xl font-black text-slate-900 dark:text-slate-100">{dashboardStats.totalPoints}</p>
-              <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">Total de Pontos</p>
-            </div>
 
+              {filtroPeriodo === 'custom' && (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Data Inicial</label>
+                    <input
+                      type="date"
+                      value={dataInicio}
+                      onChange={(e) => setDataInicio(e.target.value)}
+                      className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 text-sm font-medium text-slate-700 dark:text-slate-300 outline-none focus:border-primary transition-all"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Data Final</label>
+                    <input
+                      type="date"
+                      value={dataFim}
+                      onChange={(e) => setDataFim(e.target.value)}
+                      className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 text-sm font-medium text-slate-700 dark:text-slate-300 outline-none focus:border-primary transition-all"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Treinador</label>
+                <div className="relative flex items-center">
+                  <Users className="absolute left-3 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <select
+                    value={filtroTreinador}
+                    onChange={(e) => setFiltroTreinador(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 text-sm font-medium text-slate-700 dark:text-slate-300 outline-none focus:border-primary transition-all appearance-none"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
+                      backgroundRepeat: 'no-repeat',
+                      backgroundPosition: 'right 12px center',
+                      backgroundSize: '14px'
+                    }}
+                  >
+                    <option value="all">Todos os Treinadores</option>
+                    {trainersList.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Seção 2: Tabela de Resumo de Desempenho dos Treinadores */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="p-8 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-lg font-bold flex items-center gap-2 dark:text-slate-100">
+                <Users className="w-5 h-5 text-indigo-600" />
+                Resumo de Desempenho dos Treinadores
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50 dark:bg-slate-800/50">
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Treinador</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Treinamentos Totais</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Realizados</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Cancelados</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Tempo Total</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Duração Média</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Espera Média (TME)</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">CSAT Médio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {trainersStats.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-8 text-center text-slate-400 italic">
+                        Nenhum treinador encontrado para o filtro aplicado.
+                      </td>
+                    </tr>
+                  ) : (
+                    trainersStats.map((t) => (
+                      <tr key={t.name} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                        <td className="px-6 py-5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs">
+                              {t.name.charAt(0)}
+                            </div>
+                            <span className="font-bold text-slate-900 dark:text-slate-100">{t.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-5 text-center font-bold text-slate-900 dark:text-slate-100">{t.totalTrainings}</td>
+                        <td className="px-6 py-5 text-center font-bold text-emerald-600 dark:text-emerald-400">{t.realizedTrainings}</td>
+                        <td className="px-6 py-5 text-center font-bold text-red-500">{t.cancelledTrainings}</td>
+                        <td className="px-6 py-5 text-center">
+                          <span className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-bold">
+                            {t.totalTimeFormatted}
+                          </span>
+                        </td>
+                        <td className="px-6 py-5 text-center">
+                          <span className="px-2.5 py-1 bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 rounded-lg text-xs font-bold">
+                            {t.tmtFormatted}
+                          </span>
+                        </td>
+                        <td className="px-6 py-5 text-center font-semibold text-slate-600 dark:text-slate-400">
+                          {t.tme !== null ? `${t.tme} ${t.tme === 1 ? 'dia' : 'dias'}` : '-'}
+                        </td>
+                        <td className="px-6 py-5 text-center">
+                          {t.mediaScore !== null ? (
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black ${
+                              t.mediaScore >= 8 
+                                ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' 
+                                : t.mediaScore >= 6 
+                                  ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' 
+                                  : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'
+                            }`}>
+                              ★ {t.mediaScore.toFixed(2)}
+                            </span>
+                          ) : '-'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Top Indicators */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Total Trainings */}
             <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div className="flex justify-between items-start mb-4">
@@ -308,6 +720,45 @@ export default function TrainingDashboard() {
             </div>
           </div>
 
+          {/* Seção de Gráficos de Performance dos Treinadores */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <CustomRechartsBarChart
+              title="Nota Média por Treinador"
+              data={chartMediaScore}
+              dataKey="value"
+              fill="#6366f1"
+              name="Nota Média"
+            />
+            <CustomRechartsBarChart
+              title="Quantidade de Documentações Aprovadas"
+              data={chartApprovedDocs}
+              dataKey="value"
+              fill="#10b981"
+              name="Aprovadas"
+            />
+            <CustomRechartsBarChart
+              title="Atualização Relevante de Documentação"
+              data={chartAttDocs}
+              dataKey="value"
+              fill="#0d9488"
+              name="Atualizações"
+            />
+            <CustomRechartsBarChart
+              title="Ferramenta ou Automação Aprovada"
+              data={chartToolsApproved}
+              dataKey="value"
+              fill="#f59e0b"
+              name="Ferramentas"
+            />
+            <CustomRechartsBarChart
+              title="Chamados Decorrentes de Falha"
+              data={chartFailureTickets}
+              dataKey="value"
+              fill="#ef4444"
+              name="Chamados"
+            />
+          </div>
+
           {/* Charts Section */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Ranking Bar Chart */}
@@ -317,30 +768,34 @@ export default function TrainingDashboard() {
                 Ranking de Pontuação Acumulada
               </h3>
               <div className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dashboardStats.ranking} margin={{ left: 10, right: 10, top: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--grid-color, #f1f5f9)" />
-                    <XAxis dataKey="name" tick={{ fontSize: 12, fontWeight: 600, fill: '#64748b' }} />
-                    <YAxis />
-                    <Tooltip
-                      contentStyle={{
-                        borderRadius: '16px',
-                        border: 'none',
-                        boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                        backgroundColor: 'var(--tooltip-bg, #fff)'
-                      }}
-                    />
-                    <Bar dataKey="score" name="Pontuação" fill="#3713ec" radius={[4, 4, 0, 0]}>
-                      {dashboardStats.ranking.map((entry, index) => {
-                        let color = "#6366f1";
-                        if (index === 0) color = "#fbbf24";
-                        if (index === 1) color = "#9ca3af";
-                        if (index === 2) color = "#d97706";
-                        return <Cell key={`cell-${index}`} fill={color} />;
-                      })}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                {dashboardStats.ranking.length === 0 ? (
+                  <p className="text-center w-full italic text-slate-400 mt-20">Nenhum ponto registrado ainda.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dashboardStats.ranking} margin={{ left: 10, right: 10, top: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--grid-color, #f1f5f9)" />
+                      <XAxis dataKey="name" tick={{ fontSize: 12, fontWeight: 600, fill: '#64748b' }} />
+                      <YAxis />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: '16px',
+                          border: 'none',
+                          boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                          backgroundColor: 'var(--tooltip-bg, #fff)'
+                        }}
+                      />
+                      <Bar dataKey="score" name="Pontuação" fill="#3713ec" radius={[4, 4, 0, 0]}>
+                        {dashboardStats.ranking.map((entry, index) => {
+                          let color = "#6366f1";
+                          if (index === 0) color = "#fbbf24";
+                          if (index === 1) color = "#9ca3af";
+                          if (index === 2) color = "#d97706";
+                          return <Cell key={`cell-${index}`} fill={color} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
@@ -396,7 +851,7 @@ export default function TrainingDashboard() {
             <div className="p-8 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-lg font-bold flex items-center gap-2 dark:text-slate-100">
                 <Users className="w-5 h-5 text-primary" />
-                Resumo por Colaborador
+                Resumo por Colaborador (Pontuação)
               </h3>
             </div>
             <div className="overflow-x-auto">

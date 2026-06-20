@@ -283,7 +283,7 @@ export default function TrainingDashboard() {
         toolsApproved,
         failureTickets
       };
-    }).sort((a, b) => b.realizedTrainings - a.realizedTrainings || a.name.localeCompare(b.name));
+    }).sort((a, b) => b.totalMinutes - a.totalMinutes || b.realizedTrainings - a.realizedTrainings || a.name.localeCompare(b.name));
   }, [trainersList, filteredPoints, filtroTreinador]);
 
   // Compute map to 5 charts
@@ -612,8 +612,7 @@ export default function TrainingDashboard() {
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Treinamentos Totais</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Realizados</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Cancelados</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Tempo Total</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Duração Média</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Tempo Total na Agenda</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Espera Média (TME)</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">CSAT Médio</th>
                   </tr>
@@ -621,7 +620,7 @@ export default function TrainingDashboard() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {trainersStats.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-6 py-8 text-center text-slate-400 italic">
+                      <td colSpan={7} className="px-6 py-8 text-center text-slate-400 italic">
                         Nenhum treinador encontrado para o filtro aplicado.
                       </td>
                     </tr>
@@ -642,11 +641,6 @@ export default function TrainingDashboard() {
                         <td className="px-6 py-5 text-center">
                           <span className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-bold">
                             {t.totalTimeFormatted}
-                          </span>
-                        </td>
-                        <td className="px-6 py-5 text-center">
-                          <span className="px-2.5 py-1 bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 rounded-lg text-xs font-bold">
-                            {t.tmtFormatted}
                           </span>
                         </td>
                         <td className="px-6 py-5 text-center font-semibold text-slate-600 dark:text-slate-400">

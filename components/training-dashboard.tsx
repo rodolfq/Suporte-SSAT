@@ -217,11 +217,17 @@ export default function TrainingDashboard() {
       // Cancelled
       const cancelledTrainings = trainings.filter(p => 
         p.treinamentoTema && 
-        (p.treinamentoTema.toLowerCase() === 'cancelado' || p.treinamentoTema.toLowerCase() === 'ausente')
+        p.treinamentoTema.toLowerCase() === 'cancelado'
+      ).length;
+
+      // Absent (Clientes Ausentes)
+      const absentTrainings = trainings.filter(p => 
+        p.treinamentoTema && 
+        p.treinamentoTema.toLowerCase() === 'ausente'
       ).length;
 
       // Realized
-      const realizedTrainings = totalTrainings - cancelledTrainings;
+      const realizedTrainings = totalTrainings - cancelledTrainings - absentTrainings;
 
       // Total time in minutes
       let totalMinutes = 0;
@@ -271,6 +277,7 @@ export default function TrainingDashboard() {
         name,
         totalTrainings,
         cancelledTrainings,
+        absentTrainings,
         realizedTrainings,
         totalMinutes,
         totalTimeFormatted: formatMinutes(totalMinutes),
@@ -612,6 +619,7 @@ export default function TrainingDashboard() {
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Treinamentos Totais</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Realizados</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Cancelados</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Ausentes</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Tempo Total na Agenda</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">Espera Média (TME)</th>
                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center">CSAT Médio</th>
@@ -620,7 +628,7 @@ export default function TrainingDashboard() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {trainersStats.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-8 text-center text-slate-400 italic">
+                      <td colSpan={8} className="px-6 py-8 text-center text-slate-400 italic">
                         Nenhum treinador encontrado para o filtro aplicado.
                       </td>
                     </tr>
@@ -638,6 +646,7 @@ export default function TrainingDashboard() {
                         <td className="px-6 py-5 text-center font-bold text-slate-900 dark:text-slate-100">{t.totalTrainings}</td>
                         <td className="px-6 py-5 text-center font-bold text-emerald-600 dark:text-emerald-400">{t.realizedTrainings}</td>
                         <td className="px-6 py-5 text-center font-bold text-red-500">{t.cancelledTrainings}</td>
+                        <td className="px-6 py-5 text-center font-bold text-amber-500">{t.absentTrainings}</td>
                         <td className="px-6 py-5 text-center">
                           <span className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-bold">
                             {t.totalTimeFormatted}

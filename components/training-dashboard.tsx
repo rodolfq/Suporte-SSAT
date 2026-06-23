@@ -357,17 +357,23 @@ export default function TrainingDashboard() {
 
     const trainerScores: Record<string, {
       name: string;
+      baseScore: number;
       score: number;
       qtd: number;
       trainingsCount: number;
       docsCount: number;
       toolsCount: number;
       failuresCount: number;
+      bonusPercentage: number;
+      taxaResposta: number;
+      answeredCount: number;
+      realizedCount: number;
     }> = {};
 
     filteredPointsForStats.forEach(p => {
       const nameKey = p.treinadorNome.split(' ')[0].toLowerCase();
-      const actionPoints = POINTS_MAP[p.tipoAcao] ?? p.pontos ?? 0;
+      // Ensure p.pontos (saved as 0 for cancelled/absent in db) takes precedence over generic POINTS_MAP
+      const actionPoints = p.pontos ?? POINTS_MAP[p.tipoAcao] ?? 0;
 
       totalPoints += actionPoints;
       if (p.tipoAcao === 'treinamento') totalTrainings++;
@@ -378,23 +384,61 @@ export default function TrainingDashboard() {
       if (!trainerScores[nameKey]) {
         trainerScores[nameKey] = {
           name: p.treinadorNome,
+          baseScore: 0,
           score: 0,
           qtd: 0,
           trainingsCount: 0,
           docsCount: 0,
           toolsCount: 0,
-          failuresCount: 0
+          failuresCount: 0,
+          bonusPercentage: 0,
+          taxaResposta: 0,
+          answeredCount: 0,
+          realizedCount: 0
         };
       }
 
       const trainer = trainerScores[nameKey];
-      trainer.score += actionPoints;
+      trainer.baseScore += actionPoints;
       trainer.qtd += 1;
 
       if (p.tipoAcao === 'treinamento') trainer.trainingsCount++;
       else if (p.tipoAcao === 'nova_doc' || p.tipoAcao === 'att_doc') trainer.docsCount++;
       else if (p.tipoAcao === 'ferramenta_aut') trainer.toolsCount++;
       else if (p.tipoAcao === 'chamado_falha') trainer.failuresCount++;
+    });
+
+    // Calculate CSAT response rate and bonus percentage per trainer based on the points in the filtered dataset
+    Object.keys(trainerScores).forEach(nameKey => {
+      const trainer = trainerScores[nameKey];
+      const trainerPoints = filteredPointsForStats.filter(p => p.treinadorNome.split(' ')[0].toLowerCase() === nameKey);
+
+      // Filter realized trainings (excluding canceled/absent)
+      const realizedTrainings = trainerPoints.filter(p => {
+        if (p.tipoAcao !== 'treinamento' || !p.treinamentoTema) return false;
+        const themes = p.treinamentoTema.split(',').map(theme => theme.trim().toLowerCase());
+        return !themes.includes('cancelado') && !themes.includes('ausente');
+      });
+
+      // Count realized trainings that have CSAT responses
+      const answeredTrainings = realizedTrainings.filter(
+        p => p.treinamentoNotas && p.treinamentoNotas.length > 0
+      );
+
+      const totalTrainingsCount = realizedTrainings.length;
+      const answeredTrainingsCount = answeredTrainings.length;
+      const taxaResposta = totalTrainingsCount > 0 ? answeredTrainingsCount / totalTrainingsCount : 0;
+
+      let bonus = 0;
+      if (taxaResposta >= 0.90) bonus = 0.30;
+      else if (taxaResposta >= 0.80) bonus = 0.20;
+      else if (taxaResposta >= 0.70) bonus = 0.10;
+
+      trainer.score = parseFloat((trainer.baseScore * (1 + bonus)).toFixed(1));
+      trainer.bonusPercentage = Math.round(bonus * 100);
+      trainer.taxaResposta = taxaResposta;
+      trainer.answeredCount = answeredTrainingsCount;
+      trainer.realizedCount = totalTrainingsCount;
     });
 
     const ranking = Object.values(trainerScores).sort((a, b) => b.score - a.score);
@@ -881,9 +925,16 @@ export default function TrainingDashboard() {
                         </div>
                       </td>
                       <td className="px-8 py-5 text-center">
-                        <span className={`text-sm font-black ${c.score >= 10 ? 'text-emerald-600' : c.score >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-red-500'}`}>
-                          {c.score} pts
-                        </span>
+                        <div className="flex flex-col items-center justify-center">
+                          <span className={`text-sm font-black ${c.score >= 10 ? 'text-emerald-600' : c.score >= 0 ? 'text-slate-700 dark:text-slate-200' : 'text-red-500'}`}>
+                            {c.score} pts
+                          </span>
+                          {c.bonusPercentage > 0 && (
+                            <span className="text-[10px] font-bold text-emerald-500 mt-0.5">
+                              (Base: {c.baseScore} +{c.bonusPercentage}% CSAT)
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-8 py-5 text-center font-medium text-slate-600 dark:text-slate-400">{c.trainingsCount}</td>
                       <td className="px-8 py-5 text-center font-medium text-slate-600 dark:text-slate-400">{c.docsCount}</td>

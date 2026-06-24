@@ -418,7 +418,19 @@ RESPOSTA:
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-[600px] bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-[600px] bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden relative">
+      {/* Development Overlay */}
+      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm rounded-[2.5rem]">
+        <div className="flex flex-col items-center gap-4 text-center px-8">
+          <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+            <AlertCircle className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+          </div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">Em desenvolvimento</h2>
+          <p className="text-slate-500 dark:text-slate-400 max-w-md">
+            Esta página está em manutenção e logo voltará a ficar acessível. Agradecemos a paciência.
+          </p>
+        </div>
+      </div>
       {/* Header / Tabs */}
       <div className="flex items-center justify-between px-8 py-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
         <div className="flex items-center gap-6">

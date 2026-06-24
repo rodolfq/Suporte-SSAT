@@ -739,6 +739,7 @@ export default function Settings() {
   const [setPasswordLoading, setSetPasswordLoading] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
+  const [newUserPassword, setNewUserPassword] = useState('');
   const [addUserLoading, setAddUserLoading] = useState(false);
   const [addUserError, setAddUserError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
@@ -969,51 +970,46 @@ export default function Settings() {
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const supabaseClient = supabase;
-    if (!newUserEmail || !supabaseClient) return;
+    if (!newUserEmail || !newUserPassword || !supabaseClient) return;
     
     setAddUserLoading(true);
     setAddUserError(null);
     try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (!session) throw new Error('Não autenticado');
+
       const defaultPermissions = newUserRole === 'admin' ? DEFAULT_ADMIN_PERMISSIONS : DEFAULT_USER_PERMISSIONS;
 
-      const { error } = await supabaseClient
-        .from('profiles')
-        .upsert({
+      const res = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
           email: newUserEmail.trim().toLowerCase(),
+          password: newUserPassword,
           role: newUserRole,
-          status: 'inactive',
           permissions: defaultPermissions
-        }, { onConflict: 'email' });
+        })
+      });
 
-      if (error) throw error;
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro ao criar usuário');
 
       setNewUserEmail('');
+      setNewUserPassword('');
       setShowAddUser(false);
-      setResetSuccess(`Usuário ${newUserEmail} pré-autorizado como ${newUserRole}. Eles devem se cadastrar com este e-mail.`);
+      setResetSuccess(`Usuário ${newUserEmail} criado como ${newUserRole}.`);
       setTimeout(() => setResetSuccess(null), 5000);
     } catch (err: any) {
       console.error('Erro detalhado ao adicionar usuário:', err);
       
-      const errorMap: Record<string, string> = {
-        '42P01': 'Tabela "profiles" não encontrada. Execute o script SQL.',
-        'PGRST116': 'Erro de configuração na tabela "profiles".',
-        '42501': 'Permissão negada (RLS).',
-        '23505': 'Este e-mail já está cadastrado.',
-        '23502': 'Campo obrigatório ausente.',
-        '23503': 'Erro de chave estrangeira.',
-        'PGRST204': 'Erro de sintaxe na consulta.',
-        'PGRST301': 'Erro de autenticação Supabase.',
-      };
-
       let errorMsg = 'Erro desconhecido';
       if (err?.message === 'Failed to fetch') {
         errorMsg = 'Falha na conexão com o banco de dados.';
-      } else if (err?.code && errorMap[err.code]) {
-        errorMsg = errorMap[err.code];
-      } else if (err?.code?.startsWith('PGRST')) {
-        errorMsg = `Erro de configuração Supabase (${err.code}).`;
       } else {
-        errorMsg = err?.message || err?.details || String(err);
+        errorMsg = err?.message || String(err);
       }
       
       setAddUserError(`Erro ao salvar usuário: ${errorMsg}`);
@@ -1720,7 +1716,7 @@ export default function Settings() {
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Mínimo 6 caracteres"
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
                   />
                 </div>
 
@@ -1904,7 +1900,7 @@ export default function Settings() {
                       value={newUserEmail}
                       onChange={(e) => setNewUserEmail(e.target.value)}
                       placeholder="usuario@systemsat.com.br"
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
                     />
                   </div>
                 </div>
@@ -1930,6 +1926,22 @@ export default function Settings() {
                     >
                       Admin
                     </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Senha</label>
+                  <div className="relative">
+                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="password"
+                      required
+                      minLength={6}
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                    />
                   </div>
                 </div>
 

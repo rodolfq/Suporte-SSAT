@@ -27,7 +27,9 @@ import {
   Cell,
   PieChart,
   Pie,
-  Legend
+  Legend,
+  LineChart,
+  Line
 } from 'recharts';
 
 // Helper functions for parsing durations and waiting times
@@ -475,6 +477,152 @@ export default function TrainingDashboard() {
     };
   }, [filteredPointsForStats]);
 
+  // Compute daily training volume distribution
+  const dailyDistribution = useMemo(() => {
+    const trainings = filteredPointsForStats.filter(p => p.tipoAcao === 'treinamento');
+    const now = new Date();
+    let startDate = new Date();
+    let endDate = new Date();
+    let useFullRange = true;
+
+    switch (filtroPeriodo) {
+      case '7days':
+        startDate.setDate(now.getDate() - 6);
+        break;
+      case '30days':
+        startDate.setDate(now.getDate() - 29);
+        break;
+      case 'thisMonth':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        break;
+      case 'lastMonth':
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+        break;
+      case 'custom':
+        if (dataInicio) startDate = new Date(dataInicio + 'T00:00:00');
+        else startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        
+        if (dataFim) endDate = new Date(dataFim + 'T23:59:59');
+        else endDate = now;
+        break;
+      case 'all':
+      default:
+        if (trainings.length > 0) {
+          const timestamps = trainings.map(p => p.dataLancamento).filter(Boolean);
+          const minTime = Math.min(...timestamps);
+          const maxTime = Math.max(...timestamps);
+          startDate = new Date(minTime);
+          endDate = new Date(maxTime);
+        } else {
+          startDate.setDate(now.getDate() - 29);
+        }
+        break;
+    }
+
+    const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+    const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays > 90 || diffDays < 0) {
+      useFullRange = false;
+    }
+
+    const countsMap = new Map<string, number>();
+
+    const getLocalDateStr = (d: Date) => {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    };
+
+    const isWeekend = (d: Date) => {
+      const dayOfWeek = d.getDay();
+      return dayOfWeek === 0 || dayOfWeek === 6; // 0 = Sunday, 6 = Saturday
+    };
+
+    const isHoliday = (d: Date) => {
+      const month = d.getMonth();
+      const day = d.getDate();
+      const year = d.getFullYear();
+
+      // Fixed national holidays in Brazil
+      if (month === 0 && day === 1) return true;   // Ano Novo
+      if (month === 3 && day === 21) return true;  // Tiradentes
+      if (month === 4 && day === 1) return true;   // Dia do Trabalho
+      if (month === 8 && day === 7) return true;   // Independência do Brasil
+      if (month === 9 && day === 12) return true;  // Nossa Senhora Aparecida
+      if (month === 10 && day === 2) return true;  // Finados
+      if (month === 10 && day === 15) return true; // Proclamação da República
+      if (month === 10 && day === 20) return true; // Consciência Negra
+      if (month === 11 && day === 25) return true; // Natal
+
+      // Variable national holidays (Carnaval, Sexta-feira Santa, Corpus Christi)
+      if (year === 2024) {
+        if (month === 1 && day === 13) return true; // Carnaval
+        if (month === 2 && day === 29) return true; // Sexta-feira Santa
+        if (month === 4 && day === 30) return true; // Corpus Christi
+      }
+      if (year === 2025) {
+        if (month === 2 && day === 4) return true;  // Carnaval
+        if (month === 3 && day === 18) return true; // Sexta-feira Santa
+        if (month === 5 && day === 19) return true; // Corpus Christi
+      }
+      if (year === 2026) {
+        if (month === 1 && day === 17) return true; // Carnaval
+        if (month === 3 && day === 3) return true;  // Sexta-feira Santa
+        if (month === 5 && day === 4) return true;  // Corpus Christi
+      }
+      if (year === 2027) {
+        if (month === 1 && day === 9) return true;  // Carnaval
+        if (month === 2 && day === 26) return true; // Sexta-feira Santa
+        if (month === 4 && day === 27) return true; // Corpus Christi
+      }
+
+      return false;
+    };
+
+    if (useFullRange) {
+      const current = new Date(start);
+      let limit = 0;
+      while (current <= end && limit < 150) {
+        if (!isWeekend(current) && !isHoliday(current)) {
+          const key = getLocalDateStr(current);
+          countsMap.set(key, 0);
+        }
+        current.setDate(current.getDate() + 1);
+        limit++;
+      }
+    }
+
+    trainings.forEach(p => {
+      if (!p.dataLancamento) return;
+      const tDate = new Date(p.dataLancamento);
+      if (isWeekend(tDate) || isHoliday(tDate)) return;
+
+      const dateStr = getLocalDateStr(tDate);
+      if (!useFullRange) {
+        countsMap.set(dateStr, (countsMap.get(dateStr) || 0) + 1);
+      } else if (countsMap.has(dateStr)) {
+        countsMap.set(dateStr, countsMap.get(dateStr)! + 1);
+      }
+    });
+
+    return Array.from(countsMap.entries())
+      .map(([dateStr, count]) => {
+        const [year, month, day] = dateStr.split('-');
+        const formattedDate = `${day}/${month}`;
+        return {
+          dateStr,
+          formattedDate,
+          count
+        };
+      })
+      .sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+  }, [filteredPointsForStats, filtroPeriodo, dataInicio, dataFim]);
+
   const CustomPieTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -764,6 +912,77 @@ export default function TrainingDashboard() {
               </div>
               <p className="text-3xl font-black text-slate-900 dark:text-slate-100">{dashboardStats.totalFailures}</p>
               <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">Falhas de Treinamento</p>
+            </div>
+          </div>
+
+          {/* Gráfico de Volume de Treinamentos por Dia */}
+          <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold flex items-center gap-2 dark:text-slate-100">
+                <Calendar className="w-5 h-5 text-indigo-600" />
+                Volume de Treinamentos por Dia
+              </h3>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <Activity className="w-3 h-3" />
+                <span>Evolução do período selecionado</span>
+              </div>
+            </div>
+
+            <div className="h-[280px]">
+              {dailyDistribution.length === 0 || !dailyDistribution.some(d => d.count > 0) ? (
+                <div className="h-full flex items-center justify-center text-slate-400 italic text-sm">
+                  Sem dados de treinamentos no período
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={dailyDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="var(--grid-color, #f1f5f9)"
+                    />
+                    <XAxis
+                      dataKey="formattedDate"
+                      tick={{ fontSize: 11, fontWeight: 600, fill: '#64748b' }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      axisLine={false}
+                      tickLine={false}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: '16px',
+                        border: 'none',
+                        boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                        backgroundColor: '#0f2a5e',
+                        color: '#fff'
+                      }}
+                      labelFormatter={(label, items) => {
+                        const dateObj = items[0]?.payload?.dateStr;
+                        if (dateObj) {
+                          const [year, month, day] = dateObj.split('-');
+                          return `Data: ${day}/${month}/${year}`;
+                        }
+                        return `Data: ${label}`;
+                      }}
+                      itemStyle={{ color: '#fff', fontWeight: 600 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="count"
+                      name="Treinamentos"
+                      stroke="#6366f1"
+                      strokeWidth={3}
+                      dot={{ fill: '#6366f1', strokeWidth: 2, r: 4, stroke: 'currentColor', className: 'text-white dark:text-slate-900' }}
+                      activeDot={{ r: 6, strokeWidth: 0 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 

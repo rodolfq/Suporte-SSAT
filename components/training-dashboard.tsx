@@ -115,7 +115,7 @@ export default function TrainingDashboard() {
   const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
 
   // Filter States
-  const [filtroPeriodo, setFiltroPeriodo] = useState<string>('all');
+  const [filtroPeriodo, setFiltroPeriodo] = useState<string>('thisMonth');
   const [dataInicio, setDataInicio] = useState<string>('');
   const [dataFim, setDataFim] = useState<string>('');
   const [filtroTreinador, setFiltroTreinador] = useState<string>('all');

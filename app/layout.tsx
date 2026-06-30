@@ -4,6 +4,7 @@ import './globals.css';
 import { AppProvider } from '@/context/app-context';
 import { QueueProvider } from '@/context/queue-context';
 import { ThemeProvider } from '@/components/theme-provider';
+import { ScrollbarProvider } from '@/components/scrollbar-provider';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
@@ -24,7 +25,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           <AppProvider>
             <QueueProvider>
-              {children}
+              <ScrollbarProvider>
+                {children}
+              </ScrollbarProvider>
             </QueueProvider>
           </AppProvider>
         </ThemeProvider>

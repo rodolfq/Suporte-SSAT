@@ -202,7 +202,7 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
         {/* Advanced Column Filters - Only shown on Raw Data View */}
         {showAdvancedFilters && (
           <>
-            <div className="hidden md:flex items-center gap-2 ml-2">
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:ml-2">
               <div className="relative">
                 <button
                   onClick={() => setIsCollaboratorOpen(!isCollaboratorOpen)}
@@ -348,7 +348,7 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 10 }}
-                        className="absolute left-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2"
+                        className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2"
                       >
                         <div className="flex flex-col gap-2">
                           <button
@@ -417,7 +417,7 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 10 }}
-                        className="absolute left-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-3"
+                        className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-3"
                       >
                         <input
                           type="number"

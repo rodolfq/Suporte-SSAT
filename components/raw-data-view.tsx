@@ -14,7 +14,7 @@ interface RawDataViewProps {
 const ITEMS_PER_PAGE = 50;
 
 export default function RawDataView({ onBack }: RawDataViewProps) {
-  const { selectedRows, toggleRowExclusion, updateRowNote } = useApp();
+  const { selectedRows, toggleRowExclusion, updateRowNote, columnFilters, user } = useApp();
   const [rowToToggle, setRowToToggle] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [showNoteDialog, setShowNoteDialog] = useState(false);
@@ -57,7 +57,47 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
   };
 
   const dataToDisplay = useMemo(() => {
-    return selectedRows.map((r, idx) => {
+    const filteredRows = selectedRows.filter(row => {
+      // 1. Collaborator Filter
+      if (columnFilters.collaborators.length > 0) {
+        if (!row.colaborador || !columnFilters.collaborators.includes(row.colaborador)) {
+          return false;
+        }
+      }
+
+      // 2. Client Filter
+      if (columnFilters.clients.length > 0) {
+        if (!row.cliente || !columnFilters.clients.includes(row.cliente)) {
+          return false;
+        }
+      }
+
+      // 3. Rating Filter
+      if (columnFilters.rating !== null) {
+        const rating = row.avaliacao;
+        if (columnFilters.rating === 5) {
+          // Positive evaluation: 4 or 5 stars
+          if (rating < 4) return false;
+        } else if (columnFilters.rating === 1) {
+          // Negative/Neutral evaluation: 1, 2, or 3 stars
+          if (rating === 0 || rating > 3) return false;
+        } else if (columnFilters.rating === 0) {
+          // No evaluation (0, null, or undefined)
+          if (rating !== 0 && rating !== null && rating !== undefined) return false;
+        }
+      }
+
+      // 4. Messages Filter
+      if (columnFilters.messagesMin !== null) {
+        if (row.mensagens === undefined || row.mensagens < columnFilters.messagesMin) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    return filteredRows.map((r, idx) => {
       const baseRow: Record<string, any> = {};
       if (r.colaborador) {
         baseRow['Colaborador'] = r.colaborador;
@@ -133,7 +173,7 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
         '_notes': r.notes
       };
     });
-  }, [selectedRows]);
+  }, [selectedRows, columnFilters]);
 
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -191,7 +231,15 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
     if (rowToToggle) {
       const row = selectedRows.find(r => r.id === rowToToggle);
       const currentlyExcluded = row?.isExcluded || false;
-      await toggleRowExclusion(rowToToggle, !currentlyExcluded, currentlyExcluded ? undefined : 'Excluído manualmente');
+      
+      let reason = undefined;
+      if (!currentlyExcluded) {
+        const userEmail = user?.email || 'Usuário Desconhecido';
+        const timestamp = format(new Date(), 'dd/MM/yyyy HH:mm:ss');
+        reason = `Excluído por ${userEmail} em ${timestamp}`;
+      }
+      
+      await toggleRowExclusion(rowToToggle, !currentlyExcluded, reason);
       setShowConfirmDialog(false);
       setRowToToggle(null);
     }

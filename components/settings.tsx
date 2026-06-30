@@ -1001,6 +1001,7 @@ export default function Settings() {
       setNewUserPassword('');
       setShowAddUser(false);
       setResetSuccess(`Usuário ${newUserEmail} criado como ${newUserRole}.`);
+      await fetchUsers();
       setTimeout(() => setResetSuccess(null), 5000);
     } catch (err: any) {
       console.error('Erro detalhado ao adicionar usuário:', err);
@@ -1242,8 +1243,12 @@ export default function Settings() {
           .delete()
           .eq('email', confirmDelete.id);
         if (error) throw error;
+        setUsers(prev => prev.filter(u => u.email !== confirmDelete.id));
+        setResetSuccess('Usuário excluído com sucesso.');
+        setTimeout(() => setResetSuccess(null), 3000);
       } catch (err: any) {
         console.error('Erro ao excluir usuário:', err);
+        setAddUserError(`Erro ao excluir usuário: ${err.message || String(err)}`);
       }
     }
     setConfirmDelete(null);

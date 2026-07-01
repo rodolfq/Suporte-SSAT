@@ -118,3 +118,20 @@
 .flex > * {
   min-width: 0;
 }
+
+/* responsive dashboard widget spans */
+.dashboard-widget {
+  grid-column: span 1;
+}
+
+@media (min-width: 768px) {
+  .dashboard-widget {
+    grid-column: span var(--col-span-md, 1);
+  }
+}
+
+@media (min-width: 1024px) {
+  .dashboard-widget {
+    grid-column: span var(--col-span-lg, 1);
+  }
+}

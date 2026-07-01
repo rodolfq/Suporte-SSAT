@@ -97,12 +97,13 @@ function SortableItem({
     transition,
     zIndex: isDragging ? 50 : 'auto',
     opacity: isDragging ? 0.5 : 1,
-    gridColumn: `span ${w}`,
+    '--col-span-md': Math.min(w, 6),
+    '--col-span-lg': w,
     gridRow: `span ${h}`,
-  };
+  } as React.CSSProperties;
 
   return (
-    <div ref={setNodeRef} style={style} className="group/item relative min-h-[100px]">
+    <div ref={setNodeRef} style={style} className="group/item relative min-h-[100px] dashboard-widget">
       <div className="absolute top-3 left-3 flex flex-col items-start gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity z-20">
         <div className="flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm border border-slate-200 dark:border-slate-700 rounded-lg p-1 shadow-xl">
           <div className="flex flex-col border-r border-slate-100 dark:border-slate-700 pr-1 mr-1">
@@ -207,11 +208,11 @@ export default function GeneralDashboard({ onSelectAgent }: GeneralDashboardProp
   
   // Widget State
   const defaultWidgets = [
-    { id: 'kpi-total', w: 3, h: 2 },
-    { id: 'kpi-chat', w: 3, h: 2 },
-    { id: 'kpi-odoo', w: 3, h: 2 },
-    { id: 'kpi-bitrix', w: 3, h: 2 },
-    { id: 'kpi-evaluation-rate', w: 3, h: 2 },
+    { id: 'kpi-total', w: 4, h: 2 },
+    { id: 'kpi-chat', w: 2, h: 2 },
+    { id: 'kpi-odoo', w: 2, h: 2 },
+    { id: 'kpi-bitrix', w: 2, h: 2 },
+    { id: 'kpi-evaluation-rate', w: 2, h: 2 },
     { id: 'chart-volume', w: 6, h: 4 },
     { id: 'chart-sources', w: 6, h: 4 },
     { id: 'ranking-table', w: 12, h: 8 },

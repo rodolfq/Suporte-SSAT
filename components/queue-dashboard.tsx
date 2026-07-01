@@ -82,12 +82,13 @@ function SortableBlock({
     transition,
     zIndex: isDragging ? 50 : 'auto',
     opacity: isDragging ? 0.5 : 1,
-    gridColumn: `span ${w}`,
+    '--col-span-md': Math.min(w, 6),
+    '--col-span-lg': w,
     gridRow: `span ${h}`,
-  };
+  } as React.CSSProperties;
 
   return (
-    <div ref={setNodeRef} style={style} className="group/item relative flex flex-col min-h-0">
+    <div ref={setNodeRef} style={style} className="group/item relative flex flex-col min-h-0 dashboard-widget">
       <div className="absolute top-2 left-2 flex flex-col items-start gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity z-20">
         <div className="flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm border border-slate-200 dark:border-slate-700 rounded-lg p-1 shadow-xl">
           <div className="flex flex-col border-r border-slate-100 dark:border-slate-700 pr-1 mr-1">

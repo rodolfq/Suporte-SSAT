@@ -479,7 +479,12 @@ export default function TrainingDashboard() {
 
   // Compute daily training volume distribution
   const dailyDistribution = useMemo(() => {
-    const trainings = filteredPointsForStats.filter(p => p.tipoAcao === 'treinamento');
+    const trainings = filteredPointsForStats.filter(p => {
+      if (p.tipoAcao !== 'treinamento') return false;
+      if (!p.treinamentoTema) return true;
+      const themes = p.treinamentoTema.split(',').map(theme => theme.trim().toLowerCase());
+      return !themes.includes('cancelado') && !themes.includes('ausente');
+    });
     const now = new Date();
     let startDate = new Date();
     let endDate = new Date();

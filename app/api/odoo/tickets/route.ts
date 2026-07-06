@@ -31,9 +31,25 @@ export async function GET(request: Request) {
 
     const objectClient = xmlrpc.createSecureClient({ host, port, path: '/xmlrpc/2/object' });
     
+    // Fetch all stages first to determine which ones are active (fold = false and not named "Resolvido", etc.)
+    const stages = await new Promise<any[]>((resolve, reject) => {
+      objectClient.methodCall('execute_kw', [
+        db, uid, apiKey, 'helpdesk.stage', 'search_read', [[]], { fields: ['id', 'name', 'fold'] }
+      ], (error, value) => {
+        if (error) {
+          console.error('Odoo stages fetch error:', error);
+          reject(error);
+        } else resolve(value);
+      });
+    });
+
+    const activeStageIds = (stages || [])
+      .filter(s => !s.fold && !['Resolvido', 'Fechado', 'Done', 'Closed'].includes(s.name))
+      .map(s => s.id);
+
     const model = 'helpdesk.ticket';
     const domain = [
-      ['stage_id.name', 'not in', ['Done', 'Closed', 'Resolvido', 'Fechado']]
+      ['stage_id', 'in', activeStageIds]
     ];
     // Fields requested by user: name (titulo), user_id (responsável), id (numero do chamado)
     // Plus create_date and write_date for sorting/updates

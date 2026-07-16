@@ -396,13 +396,16 @@ const clearColumnFilters = () => {
 
       // If no layout is selected, use the default one or the first one
       const defaultLayout = data?.find(l => l.is_default) || data?.[0];
-      if (defaultLayout && !dashboardLayout) {
-        setDashboardLayout(defaultLayout.layout);
+      if (defaultLayout) {
+        // Functional update avoids depending on `dashboardLayout` (which would
+        // change this callback's identity and re-trigger the session effect
+        // below in an infinite loop, since it fires on every profile fetch).
+        setDashboardLayout(prev => prev ?? defaultLayout.layout);
       }
     } catch (err) {
       console.error('Error fetching dashboard layouts:', err);
     }
-  }, [dashboardLayout]);
+  }, []);
 
   // Auth and Profile Handling. Session lives in an httpOnly cookie set by
   // /api/auth/login; polling /api/auth/session every 5 minutes both keeps the

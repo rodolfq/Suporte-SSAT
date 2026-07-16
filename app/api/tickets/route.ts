@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-
-import { getSecret } from '@/lib/secrets-server';
+import { upsertBitrixTickets, listBitrixTicketsFiltered } from '@/lib/db/app-data';
+import { getSecret } from '@/lib/db/secrets';
 
 const ENTITY_TYPE_ID = 1086;
 
@@ -197,11 +196,6 @@ async function fetchCompaniesByIds(companyIds: number[]) {
 }
 
 export async function POST() {
-  const supabaseClient = supabase;
-  if (!supabaseClient) {
-    return NextResponse.json({ error: "Supabase client not initialized" }, { status: 500, headers: corsHeaders });
-  }
-
   try {
     console.log("Iniciando sincronização Bitrix (Smart Process Items)...");
     
@@ -286,36 +280,8 @@ export async function POST() {
       };
     });
 
-    // Upsert to Supabase
-    let { error } = await supabaseClient
-      .from('bitrix_tickets')
-      .upsert(formattedTickets, { onConflict: 'id' });
+    await upsertBitrixTickets(formattedTickets);
 
-    // Handle missing column or schema cache issues
-    if (error && (error.code === '42703' || error.message?.includes('assignee_avatar') || error.message?.includes('deadline'))) {
-      console.warn("Column assignee_avatar or deadline does not exist. Retrying without them.");
-      const fallbackTickets = formattedTickets.map(({ assignee_avatar, deadline, ...rest }: any) => rest);
-      const retry = await supabaseClient
-        .from('bitrix_tickets')
-        .upsert(fallbackTickets, { onConflict: 'id' });
-      error = retry.error;
-    }
-
-    if (error) {
-      if (error.code === '42P01') {
-        return NextResponse.json({ 
-          error: "A tabela 'bitrix_tickets' não existe no Supabase. Por favor, execute o script de migração.",
-          success: false 
-        }, { status: 404, headers: corsHeaders });
-      }
-      console.error("Supabase upsert error:", error);
-      return NextResponse.json({ 
-        error: `Erro no Supabase: ${error.message || JSON.stringify(error)}`,
-        details: error,
-        success: false
-      }, { status: 500, headers: corsHeaders });
-    }
-    
     return NextResponse.json({ success: true, count: formattedTickets.length });
   } catch (error: any) {
     console.error("API Error:", error);
@@ -328,11 +294,6 @@ export async function POST() {
 }
 
 export async function GET(request: Request) {
-  const supabaseClient = supabase;
-  if (!supabaseClient) {
-    return NextResponse.json({ error: "Supabase client not initialized" }, { status: 500, headers: corsHeaders });
-  }
-
   try {
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get('page') || '1', 10);
@@ -340,58 +301,21 @@ export async function GET(request: Request) {
     const search = searchParams.get('search') || '';
     const status = searchParams.get('status') || '';
     const assignee = searchParams.get('assignee') || '';
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
+    const startDate = searchParams.get('startDate') || undefined;
+    const endDate = searchParams.get('endDate') || undefined;
 
-    let query = supabaseClient
-      .from('bitrix_tickets')
-      .select('*', { count: 'exact' });
-
-    if (search) {
-      query = query.or(`title.ilike.%${search}%,id.ilike.%${search}%,client.ilike.%${search}%`);
-    }
-
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    if (assignee) {
-      query = query.ilike('assignee', `%${assignee}%`);
-    }
-
-    if (startDate) {
-      query = query.gte('created_at', startDate);
-    }
-
-    if (endDate) {
-      query = query.lte('created_at', endDate);
-    }
-
-    // Pagination
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-
-    query = query.order('created_at', { ascending: false }).range(from, to);
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      // Code 42P01 means "relation does not exist" (table missing)
-      if (error.code === '42P01') {
-        return NextResponse.json({ 
-          error: "A tabela 'bitrix_tickets' não existe no Supabase. Por favor, execute o script de migração.",
-          tickets: null
-        }, { status: 404, headers: corsHeaders });
-      }
-      console.error("Supabase fetch error:", error);
-      return NextResponse.json({ 
-        error: `Erro no Supabase: ${error.message || JSON.stringify(error)}`,
-        details: error
-      }, { status: 500, headers: corsHeaders });
-    }
+    const { data, count } = await listBitrixTicketsFiltered({
+      search: search || undefined,
+      status: status || undefined,
+      assignee: assignee || undefined,
+      startDate,
+      endDate,
+      page,
+      limit,
+    });
 
     // Map database fields back to frontend expected format
-    const formattedData = data.map(t => ({
+    const formattedData = data.map((t: any) => ({
       id: t.id,
       title: t.title,
       assignee: t.assignee,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { requireSession } from '@/lib/api-auth';
+import { insertDocument, insertChunk } from '@/lib/db/kb';
 import { GoogleGenerativeAI, TaskType } from '@google/generative-ai';
 import mammoth from 'mammoth';
 
@@ -30,16 +31,12 @@ const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || '
 const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2-preview" });
 
 export async function POST(req: NextRequest) {
+  if (!requireSession(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     if (!apiKey) {
       console.error('NEXT_PUBLIC_GEMINI_API_KEY não configurada.');
       return NextResponse.json({ error: 'Configuração incompleta: API Key do Gemini ausente.' }, { status: 500 });
-    }
-
-    if (!supabase) {
-      console.error('Supabase não inicializado. Verifique as variáveis de ambiente.');
-      return NextResponse.json({ error: 'Supabase não inicializado.' }, { status: 500 });
     }
 
     const formData = await req.formData();
@@ -103,25 +100,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Não foi possível extrair texto do arquivo.' }, { status: 400 });
     }
 
-    if (!supabase) {
-      return NextResponse.json({ error: 'Supabase não inicializado.' }, { status: 500 });
-    }
-
     // 1. Save document record
-    console.log('Salvando registro do documento no Supabase...');
-    const { data: doc, error: docError } = await supabase
-      .from('kb_documents')
-      .insert([{ 
-        title: file.name, 
-        file_type: file.type 
-      }])
-      .select()
-      .single();
-
-    if (docError) {
-      console.error('Erro ao salvar documento no Supabase:', docError);
-      throw docError;
-    }
+    console.log('Salvando registro do documento...');
+    const doc = await insertDocument(file.name, file.type);
 
     console.log('Documento salvo. ID:', doc.id);
 
@@ -139,16 +120,10 @@ export async function POST(req: NextRequest) {
       } as any);
       const embedding = result.embedding.values;
 
-      const { error: chunkError } = await supabase
-        .from('kb_chunks')
-        .insert([{
-          document_id: doc.id,
-          content: chunk,
-          embedding: embedding
-        }]);
-      
-      if (chunkError) {
-        console.error('Erro ao salvar chunk no Supabase:', chunkError);
+      try {
+        await insertChunk(doc.id, chunk, embedding);
+      } catch (chunkError) {
+        console.error('Erro ao salvar chunk:', chunkError);
       }
     }
 

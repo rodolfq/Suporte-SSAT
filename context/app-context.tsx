@@ -2,16 +2,16 @@
 
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
 import { SupportData, CollaboratorStats, DashboardStats, calculateStats, RawSpreadsheetRow, RankingPointsConfig, isRowExcluded } from '@/lib/data-utils';
-import { supabase } from '@/lib/supabase';
-import { 
-  startOfDay, 
-  endOfDay, 
-  subDays, 
-  startOfWeek, 
-  endOfWeek, 
-  startOfMonth, 
-  endOfMonth, 
-  startOfYear, 
+import { apiGet, apiSend } from '@/lib/api-client';
+import {
+  startOfDay,
+  endOfDay,
+  subDays,
+  startOfWeek,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  startOfYear,
   endOfYear,
   isWithinInterval
 } from 'date-fns';
@@ -39,7 +39,7 @@ export interface UserPermissions {
   view_satisfaction_data: boolean;
   view_training: boolean;
   view_queue: boolean;
-  
+
   // Ações
   upload_data: boolean;
   manage_users: boolean;
@@ -95,7 +95,7 @@ interface AppState {
   userRole: string | null;
   userPermissions: UserPermissions | null;
   isAuthReady: boolean;
-  supabase: any;
+  refreshSession: () => Promise<void>;
   dashboardLayout: any[] | null;
   queueLayout: any[] | null;
   settingsLayout: any[] | null;
@@ -107,7 +107,7 @@ interface AppState {
   saveDashboardLayout: (name: string, layout: any[], isDefault?: boolean) => Promise<void>;
   deleteDashboardLayout: (id: string) => Promise<void>;
   selectDashboardLayout: (id: string) => Promise<void>;
-  
+
   // Bitrix Timeman
   bitrixUsers: any[];
   bitrixSchedules: any[];
@@ -198,10 +198,10 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
   const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [importLogs, setImportLogs] = useState<any[]>([]);
   const [importIndicators, setImportIndicators] = useState<{ totalImported: number; totalIgnored: number; totalProcessed: number; totalDuplicates: number } | null>(null);
-  
+
   const getDateRange = (filter: string, custom: { start: string; end: string }) => {
     const now = new Date();
-    
+
     const parseLocalDate = (dateStr: string) => {
       if (!dateStr) return null;
       const [year, month, day] = dateStr.split('-').map(Number);
@@ -228,9 +228,9 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
       case 'custom':
         const customStart = parseLocalDate(custom.start);
         const customEnd = parseLocalDate(custom.end);
-        return { 
-          start: customStart ? startOfDay(customStart) : startOfMonth(now), 
-          end: customEnd ? endOfDay(customEnd) : endOfMonth(now) 
+        return {
+          start: customStart ? startOfDay(customStart) : startOfMonth(now),
+          end: customEnd ? endOfDay(customEnd) : endOfMonth(now)
         };
       default:
         return { start: new Date(0), end: new Date(8640000000000000) };
@@ -263,7 +263,7 @@ const clearColumnFilters = () => {
 };
 
 
-  
+
   const [user, setUser] = useState<any | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userPermissions, setUserPermissions] = useState<UserPermissions | null>(null);
@@ -274,6 +274,7 @@ const clearColumnFilters = () => {
   const [dashboardLayouts, setDashboardLayouts] = useState<any[]>([]);
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
   const userRef = React.useRef(user);
+  const checkSessionRef = React.useRef<(() => Promise<void>) | undefined>(undefined);
 
   // Bitrix Timeman State
   const [bitrixUsers, setBitrixUsers] = useState<any[]>([]);
@@ -296,7 +297,7 @@ const clearColumnFilters = () => {
       const data = await response.json();
       if (data.users) {
         setBitrixUsers(data.users);
-        
+
         // Update last known durations
         setLastKnownDurations(prev => {
           const next = { ...prev };
@@ -349,12 +350,12 @@ const clearColumnFilters = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, action })
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data.success) {
         fetchBitrixTimeman();
@@ -378,11 +379,6 @@ const clearColumnFilters = () => {
     userRef.current = user;
   }, [user]);
 
-  const isSupabaseConfigured =
-    !!supabase &&
-    !!process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() &&
-    !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
-
   const parseNumber = (v: any) => {
     if (v === null || v === undefined || v === '') return null;
     const n = Number(v);
@@ -391,73 +387,13 @@ const clearColumnFilters = () => {
 
   const logError = (label: string, err: any) => {
     console.error(label, err);
-    try {
-      // Use a safer stringify to avoid circular reference issues
-      const cache = new Set();
-      const safeJson = JSON.stringify(err, (key, value) => {
-        if (typeof value === 'object' && value !== null) {
-          if (cache.has(value)) return '[Circular]';
-          cache.add(value);
-        }
-        return value;
-      }, 2);
-      console.error('Full error details:', safeJson);
-
-      // Specific check for PGRST204 (schema cache issue)
-      if (err?.code === 'PGRST204' || (typeof err === 'string' && err.includes('PGRST204'))) {
-        console.error('PostgREST Schema Cache Error detected. This usually means a column was added but the cache hasn\'t refreshed.');
-      }
-    } catch (e) {
-      console.error('Error stringify failed, logging raw error object:', err);
-    }
   };
 
-  // Connection test for Supabase
-  useEffect(() => {
-    const testConnection = async () => {
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const { error } = await supabase.from('uploads').select('id').limit(1);
-          if (error) {
-            console.error('Supabase Connection Test Error:', error);
-            if (error.code === 'PGRST204') {
-              setError('Erro de cache no banco de dados. Por favor, aguarde alguns instantes e tente novamente.');
-            } else if (error.message?.includes('Unregistered API key')) {
-              setError('Supabase: Chave de API não registrada para este projeto (Unregistered API key). Verifique se a URL e a Anon Key coincidem no painel Settings/Secrets.');
-            } else {
-              setError(`Erro de conexão Supabase: ${error.message}`);
-            }
-          } else {
-            console.log('Supabase Connection Test: Success');
-          }
-        } catch (err) {
-          console.error('Supabase Connection Test Exception:', err);
-        }
-      }
-    };
-    testConnection();
-  }, [isSupabaseConfigured]);
-
-  const fetchDashboardLayouts = useCallback(async (userId: string) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient) return;
-
+  const fetchDashboardLayouts = useCallback(async () => {
     try {
-      const { data, error } = await supabaseClient
-        .from('dashboard_layouts')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        if (error.code === '42P01') {
-          console.warn('Table dashboard_layouts does not exist yet.');
-          return;
-        }
-        throw error;
-      }
+      const { data } = await apiGet<{ data: any[] }>('/api/app-data/dashboard-layouts');
       setDashboardLayouts(data || []);
-      
+
       // If no layout is selected, use the default one or the first one
       const defaultLayout = data?.find(l => l.is_default) || data?.[0];
       if (defaultLayout && !dashboardLayout) {
@@ -468,18 +404,15 @@ const clearColumnFilters = () => {
     }
   }, [dashboardLayout]);
 
-  // Auth and Profile Handling
+  // Auth and Profile Handling. Session lives in an httpOnly cookie set by
+  // /api/auth/login; polling /api/auth/session every 5 minutes both keeps the
+  // token fresh (server-side sliding refresh) and re-syncs role/permissions,
+  // replacing the previous Supabase onAuthStateChange + Realtime subscription.
   useEffect(() => {
-    const supabaseClient = supabase;
-    if (!supabaseClient) {
-      setIsAuthReady(true);
-      return;
-    }
-
     const fetchProfile = async (userId: string, email?: string) => {
       try {
         // Fetch layouts first
-        await fetchDashboardLayouts(userId);
+        await fetchDashboardLayouts();
         // Se for o admin principal, sempre dar todas as permissões
         if (email?.toLowerCase() === 'admin@systemsat.com.br') {
           console.log('Super Admin detectado:', email);
@@ -509,24 +442,8 @@ const clearColumnFilters = () => {
           return;
         }
 
-        const { data: profiles, error: profileError } = await supabaseClient
-          .from('profiles')
-          .select('role, permissions, dashboard_layout, queue_layout, settings_layout')
-          .eq('id', userId);
-        
-        let profile = profiles && profiles.length > 0 ? profiles[0] : null;
+        const { profile } = await apiGet<{ profile: any | null }>('/api/profile/me');
 
-        // Se não achou por ID, tenta por email (fallback para usuários antigos)
-        if (!profile && email) {
-          const { data: emailProfiles } = await supabaseClient
-            .from('profiles')
-            .select('role, permissions, dashboard_layout, queue_layout, settings_layout')
-            .eq('email', email);
-          if (emailProfiles && emailProfiles.length > 0) {
-            profile = emailProfiles[0];
-          }
-        }
-        
         if (!profile) {
           console.log('Perfil não encontrado no banco para:', email || userId, '- Usando permissões restritas.');
           setUserRole('user');
@@ -542,17 +459,17 @@ const clearColumnFilters = () => {
           setDashboardLayout(profile.dashboard_layout || null);
           setQueueLayout(profile.queue_layout || null);
           setSettingsLayout(profile.settings_layout || null);
-          
+
           // Garantir que permissões sejam um objeto válido
-          const dbPermissions = typeof profile.permissions === 'object' && profile.permissions !== null 
-            ? profile.permissions 
+          const dbPermissions = typeof profile.permissions === 'object' && profile.permissions !== null
+            ? profile.permissions
             : {};
 
           const mergedPermissions = {
             ...basePermissions,
             ...dbPermissions
           };
-          
+
           console.log('Permissões finais aplicadas:', mergedPermissions);
           setUserPermissions(mergedPermissions);
         }
@@ -563,35 +480,19 @@ const clearColumnFilters = () => {
       }
     };
 
-    const setupSession = async () => {
+    const checkSession = async () => {
       try {
-        // Tenta obter a sessão atual
-        const { data: { session }, error } = await supabaseClient.auth.getSession();
-        
-        if (error) {
-          const isInvalidToken = error.message?.includes('Invalid Refresh Token') || 
-                                error.message?.includes('Refresh Token Not Found');
-          
-          if (isInvalidToken) {
-            console.warn('Sessão expirada ou inválida detectada. Limpando estado local.');
-            // Limpa o localStorage manualmente para evitar que o SDK tente usar o token novamente
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('systemsat-auth-token');
-            }
-            await supabaseClient.auth.signOut().catch(() => {});
-            setUser(null);
-            setUserRole(null);
-            setUserPermissions(null);
-          } else {
-            console.warn('Erro ao recuperar sessão inicial:', error.message);
-          }
+        const res = await fetch('/api/auth/session');
+        if (!res.ok) {
+          setUser(null);
+          setUserRole(null);
+          setUserPermissions(null);
+          return;
         }
-
-        const currentUser = session?.user ?? null;
-        setUser(currentUser);
-        
-        if (currentUser) {
-          await fetchProfile(currentUser.id, currentUser.email);
+        const { user: sessionUser } = await res.json();
+        setUser(sessionUser);
+        if (sessionUser) {
+          await fetchProfile(sessionUser.id, sessionUser.email);
         }
       } catch (err: any) {
         console.error('Erro inesperado na configuração da sessão:', err);
@@ -600,174 +501,48 @@ const clearColumnFilters = () => {
       }
     };
 
-    setupSession();
-    
-    // Realtime subscription para o perfil do usuário logado
-    let profileSubscription: any = null;
+    checkSession();
+    checkSessionRef.current = checkSession;
 
-    const setupProfileSubscription = (userId: string) => {
-      if (profileSubscription) profileSubscription.unsubscribe();
-
-      profileSubscription = supabaseClient
-        .channel(`public:profiles:id=eq.${userId}`)
-        .on('postgres_changes', { 
-          event: 'UPDATE', 
-          schema: 'public', 
-          table: 'profiles',
-          filter: `id=eq.${userId}`
-        }, (payload) => {
-          console.log('Perfil atualizado em tempo real:', payload.new);
-          setUserRole(payload.new.role || 'user');
-          const merged = {
-            ...basePermissions,
-            ...(payload.new.permissions || {})
-          };
-          setUserPermissions(merged);
-        })
-        .subscribe();
-    };
-
-    const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((event, session) => {
-      console.log('Auth State Change Event:', event);
-      const currentUser = session?.user ?? null;
-      
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        setUser(currentUser);
-        if (currentUser) {
-          fetchProfile(currentUser.id, currentUser.email);
-          setupProfileSubscription(currentUser.id);
-        }
-      } else if (event === 'SIGNED_OUT') {
-        // Pequeno delay para garantir que não é um falso positivo durante refresh
-        setTimeout(async () => {
-          const { data: { session: currentSession } } = await supabaseClient.auth.getSession();
-          if (!currentSession) {
-            setUser(null);
-            setUserRole(null);
-            setUserPermissions(null);
-            if (profileSubscription) profileSubscription.unsubscribe();
-          }
-        }, 1000);
-      } else if (event === 'USER_UPDATED') {
-        setUser(currentUser);
-      }
-    });
-
-    // Heartbeat para manter a sessão ativa e verificar validade periodicamente
-    const sessionCheckInterval = setInterval(async () => {
-      try {
-        const { data: { session }, error } = await supabaseClient.auth.getSession();
-        
-        if (error) {
-          const errMsg = error.message || '';
-          if (errMsg.includes('Invalid Refresh Token') || errMsg.includes('Refresh Token Not Found')) {
-            console.error('Sessão invalidada (Refresh Token inválido). Forçando logout.');
-            // Limpa o localStorage para evitar loops
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('systemsat-auth-token');
-            }
-            await supabaseClient.auth.signOut().catch(() => {});
-            setUser(null);
-            setUserRole(null);
-            setUserPermissions(null);
-            return;
-          }
-          throw error;
-        }
-
-        if (session && session.expires_at) {
-          const expiresAt = session.expires_at * 1000;
-          const now = Date.now();
-          // Se faltar menos de 10 minutos para expirar, força um refresh
-          if (expiresAt - now < 10 * 60 * 1000) {
-            console.log('Sessão próxima de expirar, renovando...');
-            const { error: refreshError } = await supabaseClient.auth.refreshSession();
-            if (refreshError) {
-              console.error('Erro ao renovar sessão:', refreshError.message);
-              if (refreshError.message.includes('Invalid Refresh Token') || refreshError.message.includes('Refresh Token Not Found')) {
-                 if (typeof window !== 'undefined') {
-                   localStorage.removeItem('systemsat-auth-token');
-                 }
-                 await supabaseClient.auth.signOut().catch(() => {});
-                 setUser(null);
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        console.error('Erro no heartbeat de sessão:', err.message);
-      }
-    }, 5 * 60 * 1000); // A cada 5 minutos
+    // Heartbeat: re-checks the session every 5 minutes. The server transparently
+    // reissues the cookie when it's within 10 minutes of expiring, and this also
+    // re-syncs role/permissions in place of the old Realtime subscription.
+    const sessionCheckInterval = setInterval(checkSession, 5 * 60 * 1000);
 
     return () => {
-      subscription.unsubscribe();
-      if (profileSubscription) profileSubscription.unsubscribe();
       clearInterval(sessionCheckInterval);
     };
   }, [fetchDashboardLayouts]);
 
+  const refreshSession = useCallback(async () => {
+    if (checkSessionRef.current) await checkSessionRef.current();
+  }, []);
+
   const refreshData = useCallback(async () => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      console.warn('Supabase not configured, skipping refreshData');
-      setIsLoading(false);
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
 
     try {
       // 1. Fetch Uploads
       try {
-        const { data: uploadsData, error: uploadsError } = await supabaseClient
-          .from('uploads')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (uploadsError) throw uploadsError;
+        const { data: uploadsData } = await apiGet<{ data: any[] }>('/api/app-data/uploads');
         setUploads(uploadsData || []);
       } catch (err) {
         logError('Error fetching uploads:', err);
       }
 
-      // 2. Fetch Support Data (with pagination)
+      // 2. Fetch Support Data
       let allSupportData: any[] = [];
       try {
-        let from = 0;
-        const step = 1000;
-        let hasMore = true;
-
-        while (hasMore) {
-          const { data, error } = await supabaseClient
-            .from('support_data')
-            .select('*')
-            .range(from, from + step - 1);
-
-          if (error) throw error;
-
-          if (!data || data.length === 0) {
-            hasMore = false;
-          } else {
-            allSupportData = [...allSupportData, ...data];
-            from += step;
-            if (data.length < step) hasMore = false;
-          }
-
-          if (from > 50000) break; // Safety break
-        }
+        const { data } = await apiGet<{ data: any[] }>('/api/app-data/support-data');
+        allSupportData = data || [];
       } catch (err) {
         logError('Error fetching support_data:', err);
       }
 
       // 3. Fetch Collaborator Settings
       try {
-        const { data: settingsData, error: settingsError } = await supabaseClient
-          .from('collaborator_settings')
-          .select('*');
-
-        if (settingsError) throw settingsError;
+        const { data: settingsData } = await apiGet<{ data: any[] }>('/api/app-data/collaborator-settings');
 
         const newAvatarMap = new Map(
           (settingsData || []).map((s: any) => [
@@ -809,24 +584,17 @@ const clearColumnFilters = () => {
       }));
 
       setRawRows(formattedData);
-      
+
       // 4.5 Set Odoo Tickets from support_data
       const odooData = formattedData.filter(d => d.source === 'odoo');
       setOdooTickets(odooData);
 
       // 5. Fetch Bitrix Tickets
       try {
-        const { data: bitrixData, error: bitrixError } = await supabaseClient
-          .from('bitrix_tickets')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (bitrixError) throw bitrixError;
+        const { data: bitrixData } = await apiGet<{ data: any[] }>('/api/app-data/bitrix-tickets');
         setBitrixTickets(bitrixData || []);
       } catch (err: any) {
-        if (err?.code !== '42P01') {
-          logError('Error fetching bitrix_tickets:', err);
-        }
+        logError('Error fetching bitrix_tickets:', err);
       }
 
     } catch (err) {
@@ -836,11 +604,15 @@ const clearColumnFilters = () => {
       setIsLoading(false);
     }
 
-  }, [isSupabaseConfigured]);
+  }, []);
 
   useEffect(() => {
-    refreshData();
-  }, [refreshData]);
+    // Data routes require an authenticated session now (unlike the previous
+    // permissive Supabase RLS), so wait for login before fetching.
+    if (user) {
+      refreshData();
+    }
+  }, [user, refreshData]);
 
     const { collaborators: calculatedCollaborators, dashboard: calculatedDashboard, selectedRows: calculatedSelectedRows, periodDashboard: calculatedPeriodDashboard, totalDashboard: calculatedTotalDashboard } =
     React.useMemo(() => {
@@ -850,10 +622,10 @@ const clearColumnFilters = () => {
 
       // Base filtering for Chat Dashboard
       let filteredData = rawRows.filter(row => row.source === 'chat' || !row.source);
-      
+
       // Data for Total Dashboard
       let totalFilteredData = rawRows.filter(row => row.source === 'chat' || !row.source);
-      
+
       // Apply Date Filter
       if (dateFilter !== 'all') {
         filteredData = filteredData.filter(row => {
@@ -872,15 +644,15 @@ const clearColumnFilters = () => {
       // Apply global search and status filters to both datasets for consistency
       const applyGlobalFilters = (data: SupportData[]) => {
         return data.filter(row => {
-          const matchesSearch = searchTerm === '' || 
+          const matchesSearch = searchTerm === '' ||
             Object.entries(row).some(([key, val]) => {
               if (key === 'rawData' && val) {
                 return Object.values(val).some(v => String(v).toLowerCase().includes(searchTerm.toLowerCase()));
               }
-              return !['data', 'uploadId', 'isExcluded', 'exclusionReason', 'rawData'].includes(key) && 
+              return !['data', 'uploadId', 'isExcluded', 'exclusionReason', 'rawData'].includes(key) &&
                      String(val).toLowerCase().includes(searchTerm.toLowerCase());
             });
-          
+
           if (filterStatus === 'included') return !row.isExcluded && matchesSearch;
           if (filterStatus === 'excluded') return row.isExcluded && matchesSearch;
           return matchesSearch;
@@ -898,7 +670,7 @@ const clearColumnFilters = () => {
 
       // Calculate period-aware dashboard for General Dashboard
       const { dashboard: periodDash } = calculateStats(finalFilteredData, pointsConfig);
-      
+
       // Calculate total dashboard for General Dashboard (respects dateFilter AND global filters)
       const { dashboard: totalDash } = calculateStats(finalTotalFilteredData, pointsConfig);
 
@@ -935,122 +707,76 @@ const clearColumnFilters = () => {
     setIsLoading(true);
     setError(null);
 
-    if (isSupabaseConfigured && supabase) {
-      const supabaseClient = supabase;
+    try {
+      // 1. Create upload record
+      const { data: upload } = await apiSend<{ data: any }>('/api/app-data/uploads', 'POST', { filename, row_count: tickets.length, source: 'odoo' });
 
-      try {
-        // 1. Create upload record
-        const uploadPayload: any = { filename, row_count: tickets.length, source: 'odoo' };
-        let { data: upload, error: uploadError } = await supabaseClient
-          .from('uploads')
-          .insert([uploadPayload])
-          .select()
-          .single();
+      // 2. Map Odoo tickets to support_data schema
+      const supportDataFromOdoo = tickets.map(t => {
+        // Ensure we have a valid UUID for the 'id' column if it's not a UUID
+        let finalId = t.id;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-        // Fallback for PGRST204 (schema cache issue)
-        if (uploadError?.code === 'PGRST204') {
-          console.warn('PGRST204 detected on uploads insert, retrying without source column...');
-          const { source, ...fallbackPayload } = uploadPayload;
-          const { data: retryUpload, error: retryError } = await supabaseClient
-            .from('uploads')
-            .insert([fallbackPayload])
-            .select()
-            .single();
-          
-          upload = retryUpload;
-          uploadError = retryError;
-        }
-
-        if (uploadError) throw uploadError;
-
-        // 2. Map Odoo tickets to support_data schema
-        const supportDataFromOdoo = tickets.map(t => {
-          // Ensure we have a valid UUID for the 'id' column if it's not a UUID
-          let finalId = t.id;
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-          
-          if (!finalId || !uuidRegex.test(finalId)) {
-            if (finalId) {
-              // Deterministic UUID for Odoo IDs
-              let hash1 = 5381;
-              let hash2 = 0;
-              const idStr = String(finalId);
-              for (let j = 0; j < idStr.length; j++) {
-                hash1 = (hash1 * 33) ^ idStr.charCodeAt(j);
-                hash2 = ((hash2 << 5) - hash2) + idStr.charCodeAt(j);
-                hash2 = hash2 & hash2;
-              }
-              const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
-              const h2 = (Math.abs(hash2) >>> 0).toString(16).padStart(8, '0');
-              finalId = `eeeeeeee-eeee-4000-8000-${h1}${h2}`.slice(0, 36);
-            } else {
-              finalId = crypto.randomUUID();
+        if (!finalId || !uuidRegex.test(finalId)) {
+          if (finalId) {
+            // Deterministic UUID for Odoo IDs
+            let hash1 = 5381;
+            let hash2 = 0;
+            const idStr = String(finalId);
+            for (let j = 0; j < idStr.length; j++) {
+              hash1 = (hash1 * 33) ^ idStr.charCodeAt(j);
+              hash2 = ((hash2 << 5) - hash2) + idStr.charCodeAt(j);
+              hash2 = hash2 & hash2;
             }
-          }
-
-          return {
-            id: finalId,
-            upload_id: upload.id,
-            colaborador: t.assignee || 'Sem Atendente',
-            cliente: t.client || 'Sem Cliente',
-            data: t.created_at || new Date().toISOString(),
-            stage: t.stage || null,
-            sla_deadline: t.sla_deadline || null,
-            source: 'odoo',
-            source_file: filename,
-            imported_at: new Date().toISOString(),
-            raw_data: {
-              id: t.id, // Store original Odoo ID
-              name: t.name, // Store original Odoo Name
-              priority: t.priority,
-              subject: t.subject,
-              team: t.team,
-              last_updated: t.last_updated,
-              link: t.link,
-              properties: t.properties
-            },
-            // Default values for fields not present in Odoo
-            tempo_resposta: null,
-            duracao: null,
-            avaliacao: 0,
-            atendimentos: 1,
-            mensagens: 0,
-            is_excluded: false
-          };
-        });
-
-        // 3. Upsert to support_data (unified table)
-        // Use ignoreDuplicates: true to keep the first item if ID repeats
-        const { error: upsertError } = await supabaseClient
-          .from('support_data')
-          .upsert(supportDataFromOdoo, { onConflict: 'id', ignoreDuplicates: true });
-
-        if (upsertError) {
-          // Fallback for PGRST204 (schema cache issue)
-          if (upsertError.code === 'PGRST204') {
-            console.warn('PGRST204 detected on support_data upsert from Odoo, retrying without new columns...');
-            const fallbackTickets = supportDataFromOdoo.map(({ source_file, imported_at, ...rest }: any) => rest);
-            const { error: retryError } = await supabaseClient
-              .from('support_data')
-              .upsert(fallbackTickets, { onConflict: 'id', ignoreDuplicates: true });
-            
-            if (retryError) {
-              logError('Retry Odoo to Support Upsert error:', retryError);
-              throw retryError;
-            }
+            const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
+            const h2 = (Math.abs(hash2) >>> 0).toString(16).padStart(8, '0');
+            finalId = `eeeeeeee-eeee-4000-8000-${h1}${h2}`.slice(0, 36);
           } else {
-            throw upsertError;
+            finalId = crypto.randomUUID();
           }
         }
 
-        await refreshData();
-      } catch (err: any) {
-        logError('Error saving Odoo data:', err);
-        setError(`Erro ao salvar Odoo: ${err.message}`);
-      }
+        return {
+          id: finalId,
+          upload_id: upload.id,
+          colaborador: t.assignee || 'Sem Atendente',
+          cliente: t.client || 'Sem Cliente',
+          data: t.created_at || new Date().toISOString(),
+          stage: t.stage || null,
+          sla_deadline: t.sla_deadline || null,
+          source: 'odoo',
+          source_file: filename,
+          imported_at: new Date().toISOString(),
+          raw_data: {
+            id: t.id, // Store original Odoo ID
+            name: t.name, // Store original Odoo Name
+            priority: t.priority,
+            subject: t.subject,
+            team: t.team,
+            last_updated: t.last_updated,
+            link: t.link,
+            properties: t.properties
+          },
+          // Default values for fields not present in Odoo
+          tempo_resposta: null,
+          duracao: null,
+          avaliacao: 0,
+          atendimentos: 1,
+          mensagens: 0,
+          is_excluded: false
+        };
+      });
+
+      // 3. Upsert to support_data (unified table)
+      await apiSend('/api/app-data/support-data', 'PUT', { rows: supportDataFromOdoo });
+
+      await refreshData();
+    } catch (err: any) {
+      logError('Error saving Odoo data:', err);
+      setError(`Erro ao salvar Odoo: ${err.message}`);
     }
     setIsLoading(false);
-  }, [refreshData, isSupabaseConfigured]);
+  }, [refreshData]);
 
   const setRawData = useCallback(async (
     processedData: SupportData[],
@@ -1068,211 +794,101 @@ const clearColumnFilters = () => {
     if (indicators) setImportIndicators(indicators);
     if (logs) setImportLogs(logs);
 
-    if (isSupabaseConfigured && supabase) {
-      const supabaseClient = supabase;
+    try {
+      const { data: upload } = await apiSend<{ data: any }>('/api/app-data/uploads', 'POST', { filename, row_count: processedData.length, source });
 
-      try {
+      const chunkSize = 500;
 
-        const uploadPayload: any = { filename, row_count: processedData.length, source };
-        let { data: upload, error: uploadError } = await supabaseClient
-          .from('uploads')
-          .insert([uploadPayload])
-          .select()
-          .single();
+      for (let i = 0; i < allRows.length; i += chunkSize) {
 
-        // Fallback for PGRST204 (schema cache issue)
-        if (uploadError?.code === 'PGRST204') {
-          console.warn('PGRST204 detected on uploads insert in setRawData, retrying without source column...');
-          const { source: _, ...fallbackPayload } = uploadPayload;
-          const { data: retryUpload, error: retryError } = await supabaseClient
-            .from('uploads')
-            .insert([fallbackPayload])
-            .select()
-            .single();
-          
-          upload = retryUpload;
-          uploadError = retryError;
-        }
+        const chunk = allRows.slice(i, i + chunkSize).map(d => {
+          // Ensure we have a valid UUID for the 'id' column
+          let finalId = d.id;
 
-        if (uploadError) throw uploadError;
-
-        const chunkSize = 500;
-
-        for (let i = 0; i < allRows.length; i += chunkSize) {
-
-          const chunk = allRows.slice(i, i + chunkSize).map(d => {
-            // Ensure we have a valid UUID for the 'id' column
-            let finalId = d.id;
-            
-            // If the ID is missing or not a valid UUID, we need to handle it
-            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            if (!finalId || !uuidRegex.test(finalId)) {
-              if (finalId) {
-                // If we have a non-UUID ID, generate a deterministic UUID based on it
-                // to maintain deduplication (same ID from spreadsheet = same UUID)
-                let hash1 = 5381;
-                let hash2 = 0;
-                for (let j = 0; j < finalId.length; j++) {
-                  hash1 = (hash1 * 33) ^ finalId.charCodeAt(j);
-                  hash2 = ((hash2 << 5) - hash2) + finalId.charCodeAt(j);
-                  hash2 = hash2 & hash2;
-                }
-                const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
-                const h2 = (Math.abs(hash2) >>> 0).toString(16).padStart(8, '0');
-                finalId = `00000000-0000-4000-8000-${h1}${h2}`.slice(0, 36);
-              } else {
-                // If no ID at all, generate a deterministic UUID based on row content
-                // to prevent duplicates of the exact same row (Collab + Client + Date)
-                const fingerprint = `${d.colaborador}|${d.cliente}|${d.data.getTime()}|${d.mensagens}`;
-                let hash1 = 5381;
-                let hash2 = 0;
-                for (let j = 0; j < fingerprint.length; j++) {
-                  hash1 = (hash1 * 33) ^ fingerprint.charCodeAt(j);
-                  hash2 = ((hash2 << 5) - hash2) + fingerprint.charCodeAt(j);
-                  hash2 = hash2 & hash2;
-                }
-                const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
-                const h2 = (Math.abs(hash2) >>> 0).toString(16).padStart(8, '0');
-                finalId = `ffffffff-ffff-4000-8000-${h1}${h2}`.slice(0, 36);
+          // If the ID is missing or not a valid UUID, we need to handle it
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (!finalId || !uuidRegex.test(finalId)) {
+            if (finalId) {
+              // If we have a non-UUID ID, generate a deterministic UUID based on it
+              // to maintain deduplication (same ID from spreadsheet = same UUID)
+              let hash1 = 5381;
+              let hash2 = 0;
+              for (let j = 0; j < finalId.length; j++) {
+                hash1 = (hash1 * 33) ^ finalId.charCodeAt(j);
+                hash2 = ((hash2 << 5) - hash2) + finalId.charCodeAt(j);
+                hash2 = hash2 & hash2;
               }
-            }
-
-            return {
-              id: finalId,
-              upload_id: upload.id,
-              colaborador: d.colaborador,
-              cliente: d.cliente,
-              tempo_resposta: d.tempoResposta,
-              duracao: d.duracao,
-              avaliacao: d.avaliacao || 0,
-              atendimentos: d.atendimentos || 1,
-              mensagens: d.mensagens || 0,
-              data: d.data.toISOString(),
-              source: source,
-              stage: d.stage || null,
-              sla_deadline: d.slaDeadline ? d.slaDeadline.toISOString() : null,
-              is_excluded: d.isExcluded || false,
-              exclusion_reason: d.exclusionReason || null,
-              raw_data: d.rawData || null,
-              source_file: filename,
-              imported_at: new Date().toISOString(),
-              // New fields from ChatGPT prompt
-              criado_em: d.criadoEm ? d.criadoEm.toISOString() : null,
-              agente_respondeu_em: d.agenteRespondeuEm ? d.agenteRespondeuEm.toISOString() : null,
-              agente_encerrou_em: d.agenteEncerrouEm ? d.agenteEncerrouEm.toISOString() : null,
-              duracao_conversa_segundos: d.duracaoSegundos || null,
-              tempo_inicial_resposta_segundos: d.tempoRespostaSegundos || null,
-              avaliado_pelos_clientes: d.avaliadoPelosClientes || null
-            };
-          });
-
-          const { error: dataError } = await supabaseClient
-            .from('support_data')
-            .upsert(chunk, { onConflict: 'id', ignoreDuplicates: true });
-
-          if (dataError) {
-            // Fallback for PGRST204 (schema cache issue)
-            if (dataError.code === 'PGRST204') {
-              console.warn('PGRST204 detected on support_data upsert, retrying without new columns...');
-              const fallbackChunk = chunk.map(({ 
-                criado_em, agente_respondeu_em, agente_encerrou_em, 
-                duracao_conversa_segundos, tempo_inicial_resposta_segundos, 
-                avaliado_pelos_clientes, source, stage, sla_deadline, 
-                source_file, imported_at, is_excluded, exclusion_reason, ...rest 
-              }: any) => rest);
-              const { error: retryError } = await supabaseClient
-                .from('support_data')
-                .upsert(fallbackChunk, { onConflict: 'id', ignoreDuplicates: true });
-              if (retryError) throw retryError;
-            } else if (dataError.code === '23502') {
-              // Fallback for 23502 (NOT NULL constraint violation)
-              console.warn('23502 detected on support_data insert (NOT NULL violation), retrying with default values for null fields...');
-              const fallbackChunk = chunk.map(d => ({
-                ...d,
-                tempo_resposta: d.tempo_resposta === null ? 0 : d.tempo_resposta,
-                duracao: d.duracao === null ? 0 : d.duracao,
-                avaliacao: d.avaliacao === null ? 0 : d.avaliacao
-              }));
-              const { error: retryError } = await supabaseClient
-                .from('support_data')
-                .upsert(fallbackChunk, { onConflict: 'id', ignoreDuplicates: true });
-              if (retryError) throw retryError;
+              const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
+              const h2 = (Math.abs(hash2) >>> 0).toString(16).padStart(8, '0');
+              finalId = `00000000-0000-4000-8000-${h1}${h2}`.slice(0, 36);
             } else {
-              throw dataError;
+              // If no ID at all, generate a deterministic UUID based on row content
+              // to prevent duplicates of the exact same row (Collab + Client + Date)
+              const fingerprint = `${d.colaborador}|${d.cliente}|${d.data.getTime()}|${d.mensagens}`;
+              let hash1 = 5381;
+              let hash2 = 0;
+              for (let j = 0; j < fingerprint.length; j++) {
+                hash1 = (hash1 * 33) ^ fingerprint.charCodeAt(j);
+                hash2 = ((hash2 << 5) - hash2) + fingerprint.charCodeAt(j);
+                hash2 = hash2 & hash2;
+              }
+              const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
+              const h2 = (Math.abs(hash2) >>> 0).toString(16).padStart(8, '0');
+              finalId = `ffffffff-ffff-4000-8000-${h1}${h2}`.slice(0, 36);
             }
           }
 
-          // Also save to raw_chat_data and processed_chat_data if source is chat
-          if (source === 'chat') {
-            const rawChunk = chunk.map(d => ({
-              id: d.id,
-              cliente: d.cliente,
-              mensagens: d.mensagens,
-              colaborador: d.colaborador,
-              criado_em: d.criado_em,
-              agente_respondeu_em: d.agente_respondeu_em,
-              agente_encerrou_em: d.agente_encerrou_em,
-              duracao_conversa: d.raw_data?.['Duração da conversa'] || null,
-              tempo_inicial_resposta: d.raw_data?.['Tempo inicial de resposta'] || null,
-              avaliado_pelos_clientes: d.avaliado_pelos_clientes,
-              upload_id: d.upload_id,
-              imported_at: d.imported_at
-            }));
+          return {
+            id: finalId,
+            upload_id: upload.id,
+            colaborador: d.colaborador,
+            cliente: d.cliente,
+            tempo_resposta: d.tempoResposta,
+            duracao: d.duracao,
+            avaliacao: d.avaliacao || 0,
+            atendimentos: d.atendimentos || 1,
+            mensagens: d.mensagens || 0,
+            data: d.data.toISOString(),
+            source: source,
+            stage: d.stage || null,
+            sla_deadline: d.slaDeadline ? d.slaDeadline.toISOString() : null,
+            is_excluded: d.isExcluded || false,
+            exclusion_reason: d.exclusionReason || null,
+            raw_data: d.rawData || null,
+            source_file: filename,
+            imported_at: new Date().toISOString(),
+            duracao_segundos: d.duracaoSegundos || null,
+            tempo_resposta_segundos: d.tempoRespostaSegundos || null
+          };
+        });
 
-            const processedChunk = chunk.filter(d => !d.is_excluded).map(d => ({
-              id: d.id,
-              cliente: d.cliente,
-              mensagens: d.mensagens,
-              colaborador: d.colaborador,
-              criado_em: d.criado_em,
-              agente_respondeu_em: d.agente_respondeu_em,
-              agente_encerrou_em: d.agente_encerrou_em,
-              duracao_minutos: d.duracao,
-              tempo_resposta_minutos: d.tempo_resposta,
-              avaliacao: d.avaliacao,
-              upload_id: d.upload_id,
-              imported_at: d.imported_at
+        try {
+          await apiSend('/api/app-data/support-data', 'PUT', { rows: chunk });
+        } catch (dataErr: any) {
+          if (dataErr.code === '23502') {
+            // Fallback for NOT NULL violation: coerce nulls to 0 and retry
+            const fallbackChunk = chunk.map(d => ({
+              ...d,
+              tempo_resposta: d.tempo_resposta === null ? 0 : d.tempo_resposta,
+              duracao: d.duracao === null ? 0 : d.duracao,
+              avaliacao: d.avaliacao === null ? 0 : d.avaliacao
             }));
-
-            if (rawChunk.length > 0) {
-              await supabaseClient.from('raw_chat_data').upsert(rawChunk, { onConflict: 'id', ignoreDuplicates: true });
-            }
-            if (processedChunk.length > 0) {
-              await supabaseClient.from('processed_chat_data').upsert(processedChunk, { onConflict: 'id', ignoreDuplicates: true });
-            }
+            await apiSend('/api/app-data/support-data', 'PUT', { rows: fallbackChunk });
+          } else {
+            throw dataErr;
           }
         }
-
-        await refreshData();
-
-      } catch (err: any) {
-
-        logError('Error saving data to Supabase:', err);
-
-        const message =
-          err?.message ||
-          err?.details ||
-          err?.hint ||
-          JSON.stringify(err);
-
-        setError(`Erro ao salvar no banco: ${message}`);
-
-        const localId = Math.random().toString(36).substring(7);
-
-        setUploads(prev => [
-          { id: localId, filename, created_at: new Date().toISOString(), row_count: allRows.length },
-          ...prev
-        ]);
-
-        setRawRows(allRows);
-
-        const { collaborators, dashboard } = calculateStats(processedData, pointsConfig);
-
-        setCollaborators(collaborators);
-        setDashboard(dashboard);
       }
 
-    } else {
+      await refreshData();
+
+    } catch (err: any) {
+
+      logError('Error saving data:', err);
+
+      const message = err?.message || JSON.stringify(err);
+
+      setError(`Erro ao salvar no banco: ${message}`);
 
       const localId = Math.random().toString(36).substring(7);
 
@@ -1290,7 +906,7 @@ const clearColumnFilters = () => {
     }
 
     setIsLoading(false);
-  }, [refreshData, isSupabaseConfigured, pointsConfig]);
+  }, [refreshData, pointsConfig]);
 
   const syncOdooTickets = useCallback(async (apiKey?: string) => {
     setIsLoading(true);
@@ -1300,7 +916,7 @@ const clearColumnFilters = () => {
       if (apiKey) {
         headers['X-Odoo-API-Key'] = apiKey;
       }
-      
+
       const response = await fetch('/api/odoo/tickets', { headers });
       if (!response.ok) {
         const errData = await response.json();
@@ -1339,36 +955,11 @@ const clearColumnFilters = () => {
   }, [refreshData]);
 
   const deleteUpload = async (id: string) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      setUploads(prev => prev.filter(u => u.id !== id));
-      setRawRows([]);
-      setCollaborators([]);
-      setDashboard(null);
-      return;
-    }
-
     setIsLoading(true);
-
     try {
-
-      const { error: dataError } = await supabaseClient
-        .from('support_data')
-        .delete()
-        .eq('upload_id', id);
-
-      if (dataError) throw dataError;
-
-      const { error: uploadError } = await supabaseClient
-        .from('uploads')
-        .delete()
-        .eq('id', id);
-
-      if (uploadError) throw uploadError;
-
+      await apiSend(`/api/app-data/support-data?uploadId=${id}`, 'DELETE');
+      await apiSend(`/api/app-data/uploads?id=${id}`, 'DELETE');
       await refreshData();
-
     } catch (err: any) {
       logError('Error deleting upload:', err);
       setError(`Erro ao excluir upload: ${err?.message}`);
@@ -1378,35 +969,11 @@ const clearColumnFilters = () => {
   };
 
   const deleteCollaborator = async (name: string) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      const filtered = rawRows.filter(r => r.colaborador !== name);
-      setRawRows(filtered);
-      const { collaborators, dashboard } = calculateStats(filtered, pointsConfig);
-      setCollaborators(collaborators);
-      setDashboard(dashboard);
-      return;
-    }
-
     setIsLoading(true);
-
     try {
-
-      const { error: dataError } = await supabaseClient
-        .from('support_data')
-        .delete()
-        .eq('colaborador', name);
-
-      if (dataError) throw dataError;
-
-      await supabaseClient
-        .from('collaborator_settings')
-        .delete()
-        .eq('name', name);
-
+      await apiSend(`/api/app-data/support-data?colaborador=${encodeURIComponent(name)}`, 'DELETE');
+      await apiSend(`/api/app-data/collaborator-settings?name=${encodeURIComponent(name)}`, 'DELETE');
       await refreshData();
-
     } catch (err: any) {
       logError('Error deleting collaborator:', err);
       setError(`Erro ao excluir colaborador: ${err?.message}`);
@@ -1416,31 +983,11 @@ const clearColumnFilters = () => {
   };
 
   const updateCollaboratorAvatar = async (name: string, avatarUrl: string, options?: any) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      setCollaborators(prev =>
-        prev.map(c => (c.name === name ? { ...c, avatarUrl, avatarOptions: options } : c))
-      );
-      return;
-    }
-
     try {
-
-      const { error } = await supabaseClient
-        .from('collaborator_settings')
-        .upsert({
-          name,
-          avatar_url: avatarUrl,
-          avatar_options: options
-        });
-
-      if (error) throw error;
-
+      await apiSend('/api/app-data/collaborator-settings', 'PUT', { name, avatar_url: avatarUrl, avatar_options: options });
       setCollaborators(prev =>
         prev.map(c => (c.name === name ? { ...c, avatarUrl, avatarOptions: options } : c))
       );
-
     } catch (err: any) {
       logError('Error updating avatar:', err);
       setError(`Erro ao atualizar avatar: ${err?.message}`);
@@ -1448,25 +995,8 @@ const clearColumnFilters = () => {
   };
 
   const updateCollaboratorBadges = async (name: string, badges: string[]) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      setCollaborators(prev =>
-        prev.map(c => (c.name === name ? { ...c, badges } : c))
-      );
-      return;
-    }
-
     try {
-      const { error } = await supabaseClient
-        .from('collaborator_settings')
-        .upsert({
-          name,
-          badges
-        });
-
-      if (error) throw error;
-
+      await apiSend('/api/app-data/collaborator-settings', 'PUT', { name, badges });
       setCollaborators(prev =>
         prev.map(c => (c.name === name ? { ...c, badges } : c))
       );
@@ -1476,25 +1006,8 @@ const clearColumnFilters = () => {
   };
 
   const updateCollaboratorGoals = async (name: string, goals: any[]) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      setCollaborators(prev =>
-        prev.map(c => (c.name === name ? { ...c, goals } : c))
-      );
-      return;
-    }
-
     try {
-      const { error } = await supabaseClient
-        .from('collaborator_settings')
-        .upsert({
-          name,
-          goals
-        });
-
-      if (error) throw error;
-
+      await apiSend('/api/app-data/collaborator-settings', 'PUT', { name, goals });
       setCollaborators(prev =>
         prev.map(c => (c.name === name ? { ...c, goals } : c))
       );
@@ -1504,185 +1017,95 @@ const clearColumnFilters = () => {
   };
 
   const updateDashboardLayout = async (layout: any[]) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient || !user) {
+    if (!user) {
       setDashboardLayout(layout);
       return;
     }
 
     try {
       // 1. Update the profile (last used layout)
-      const { error: profileError } = await supabaseClient
-        .from('profiles')
-        .update({ dashboard_layout: layout })
-        .eq('id', user.id);
+      await apiSend('/api/profile/me', 'PATCH', { dashboard_layout: layout });
 
-      if (profileError) {
-        console.error('Error updating profile layout:', {
-          code: profileError.code,
-          message: profileError.message,
-          details: profileError.details
-        });
-      }
-      
       // 2. If a named layout is selected, update it too
       if (selectedLayoutId) {
-        const { error: namedError } = await supabaseClient
-          .from('dashboard_layouts')
-          .update({ 
-            layout,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', selectedLayoutId)
-          .eq('user_id', user.id);
-        
-        if (namedError) {
-          console.error('Error updating named layout:', {
-            code: namedError.code,
-            message: namedError.message,
-            details: namedError.details
-          });
-        }
-        
+        await apiSend('/api/app-data/dashboard-layouts', 'PATCH', { id: selectedLayoutId, layout });
+
         // Update local state for layouts list
-        setDashboardLayouts(prev => prev.map(l => 
+        setDashboardLayouts(prev => prev.map(l =>
           l.id === selectedLayoutId ? { ...l, layout, updated_at: new Date().toISOString() } : l
         ));
       }
-      
+
       setDashboardLayout(layout);
     } catch (err: any) {
       console.error('Error updating dashboard layout:', err);
-      // Don't show error to user for background updates to avoid noise, 
+      // Don't show error to user for background updates to avoid noise,
       // but log it for debugging
     }
   };
 
   const updateQueueLayout = async (layout: any[]) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient || !user) return;
+    if (!user) return;
 
     try {
       setQueueLayout(layout);
-      
-      // Update profile
-      await supabaseClient
-        .from('profiles')
-        .update({ queue_layout: layout })
-        .eq('id', user.id);
+      await apiSend('/api/profile/me', 'PATCH', { queue_layout: layout });
     } catch (err: any) {
       console.error('Error updating queue layout:', err);
     }
   };
 
   const updateSettingsLayout = async (layout: any[]) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient || !user) {
+    if (!user) {
       setSettingsLayout(layout);
       return;
     }
 
     try {
       setSettingsLayout(layout);
-      await supabaseClient
-        .from('profiles')
-        .update({ settings_layout: layout })
-        .eq('id', user.id);
+      await apiSend('/api/profile/me', 'PATCH', { settings_layout: layout });
     } catch (err: any) {
       console.error('Error updating settings layout:', err);
     }
   };
 
   const saveDashboardLayout = async (name: string, layout: any[], isDefault: boolean = false) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient || !user) {
-      console.warn('Save attempted without user or supabase client');
+    if (!user) {
+      console.warn('Save attempted without user');
       return;
     }
 
     try {
       console.log('Saving layout:', { name, userId: user.id });
 
-      // If setting as default, unset others
-      if (isDefault) {
-        await supabaseClient
-          .from('dashboard_layouts')
-          .update({ is_default: false })
-          .eq('user_id', user.id);
-      }
+      const { data } = await apiSend<{ data: any }>('/api/app-data/dashboard-layouts', 'POST', { name, layout, is_default: isDefault });
 
-      const { data, error } = await supabaseClient
-        .from('dashboard_layouts')
-        .upsert({
-          user_id: user.id,
-          name,
-          layout,
-          is_default: isDefault,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id,name' })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Supabase error in saveDashboardLayout:', error);
-        throw error;
-      }
-      
       if (!data) {
         throw new Error('Nenhum dado retornado após o salvamento.');
       }
-      
-      await fetchDashboardLayouts(user.id);
+
+      await fetchDashboardLayouts();
       setSelectedLayoutId(data.id);
       setDashboardLayout(layout);
-      
+
       console.log('Layout saved successfully:', data.id);
     } catch (err: any) {
-      // Extremely verbose logging for debugging
-      const errorDetails = {
-        message: err.message || 'No message',
-        code: err.code || 'No code',
-        details: err.details || 'No details',
-        hint: err.hint || 'No hint',
-        status: err.status || 'No status'
-      };
-      
-      console.error('Detailed error saving dashboard layout (Stringified):', JSON.stringify(errorDetails, null, 2));
-      console.error('Full error object:', err);
-      
-      let userMessage = err.message || 'Erro desconhecido';
-      
-      if (err.code === '42P01') {
-        userMessage = 'A tabela "dashboard_layouts" não foi encontrada. Por favor, execute a query SQL fornecida no chat para criar as tabelas necessárias.';
-      } else if (err.code === '42703') {
-        userMessage = 'Uma coluna necessária está faltando no banco de dados. Por favor, execute a query SQL de atualização.';
-      } else if (err.code === '23505') {
-        userMessage = 'Já existe um layout com este nome.';
-      } else if (err.code === 'PGRST116') {
-        userMessage = 'Erro ao processar o retorno do banco (Single row expected). Verifique se o layout foi salvo corretamente.';
-      }
-      
-      setError(`Erro ao salvar layout: ${userMessage}`);
+      console.error('Error saving dashboard layout:', err);
+      setError(`Erro ao salvar layout: ${err.message || 'Erro desconhecido'}`);
     }
   };
 
   const deleteDashboardLayout = async (id: string) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient || !user) return;
+    if (!user) return;
 
     try {
-      const { error } = await supabaseClient
-        .from('dashboard_layouts')
-        .delete()
-        .eq('id', id);
+      await apiSend(`/api/app-data/dashboard-layouts?id=${id}`, 'DELETE');
 
-      if (error) throw error;
-      
       if (selectedLayoutId === id) {
         setSelectedLayoutId(null);
       }
-      
-      await fetchDashboardLayouts(user.id);
+
+      await fetchDashboardLayouts();
     } catch (err: any) {
       console.error('Error deleting dashboard layout:', err);
       setError(`Erro ao excluir layout: ${err.message}`);
@@ -1694,37 +1117,22 @@ const clearColumnFilters = () => {
       setSelectedLayoutId(null);
       return;
     }
-    
+
     const layout = dashboardLayouts.find(l => l.id === id);
     if (layout) {
       setSelectedLayoutId(id);
       setDashboardLayout(layout.layout);
-      
+
       // Also update profile as last used
-      if (user && supabase) {
-        await supabase
-          .from('profiles')
-          .update({ dashboard_layout: layout.layout })
-          .eq('id', user.id);
+      if (user) {
+        await apiSend('/api/profile/me', 'PATCH', { dashboard_layout: layout.layout });
       }
     }
   };
 
   const toggleRowExclusion = async (rowId: string, exclude: boolean, reason?: string) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      setRawRows(prev => prev.map(r => r.id === rowId ? { ...r, isExcluded: exclude, exclusionReason: reason } : r));
-      return;
-    }
-
     try {
-      const { error } = await supabaseClient
-        .from('support_data')
-        .update({ is_excluded: exclude, exclusion_reason: reason })
-        .eq('id', rowId);
-
-      if (error) throw error;
+      await apiSend('/api/app-data/support-data', 'PATCH', { id: rowId, is_excluded: exclude, exclusion_reason: reason });
       await refreshData();
     } catch (err: any) {
       logError('Error toggling row exclusion:', err);
@@ -1733,20 +1141,8 @@ const clearColumnFilters = () => {
   };
 
   const updateRowNote = async (rowId: string, note: string) => {
-    const supabaseClient = supabase;
-
-    if (!isSupabaseConfigured || !supabaseClient) {
-      setRawRows(prev => prev.map(r => r.id === rowId ? { ...r, notes: note } : r));
-      return;
-    }
-
     try {
-      const { error } = await supabaseClient
-        .from('support_data')
-        .update({ notes: note })
-        .eq('id', rowId);
-
-      if (error) throw error;
+      await apiSend('/api/app-data/support-data', 'PATCH', { id: rowId, notes: note });
       await refreshData();
     } catch (err: any) {
       logError('Error updating row note:', err);
@@ -1763,32 +1159,13 @@ const clearColumnFilters = () => {
   };
 
   const clearAllData = async () => {
-    if (!isSupabaseConfigured || !supabase) {
-      resetData();
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
 
     try {
-      // 1. Delete all support data
-      const { error: dataError } = await supabase
-        .from('support_data')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+      await apiSend('/api/app-data/support-data?all=true', 'DELETE');
+      await apiSend('/api/app-data/uploads?all=true', 'DELETE');
 
-      if (dataError) throw dataError;
-
-      // 2. Delete all uploads
-      const { error: uploadError } = await supabase
-        .from('uploads')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
-
-      if (uploadError) throw uploadError;
-
-      // 3. Clear local state and refresh
       resetData();
       await refreshData();
     } catch (err: any) {
@@ -1863,7 +1240,7 @@ const clearColumnFilters = () => {
         userRole,
         userPermissions,
         isAuthReady,
-        supabase,
+        refreshSession,
         dashboardLayout,
         queueLayout,
         dashboardLayouts,

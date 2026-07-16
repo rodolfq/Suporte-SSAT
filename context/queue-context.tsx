@@ -1,7 +1,8 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { apiGet, apiSend } from '@/lib/api-client';
+import { useApp } from '@/context/app-context';
 import { format, startOfDay, isAfter, isBefore, isToday, parseISO } from 'date-fns';
 
 export interface Operator {
@@ -84,7 +85,7 @@ interface QueueState {
   schedules: Schedule[];
   isLoading: boolean;
   error: string | null;
-  
+
   // Actions
   fetchOperators: () => Promise<void>;
   fetchCurrentQueue: (dateStr?: string) => Promise<void>;
@@ -112,6 +113,7 @@ interface QueueState {
 const QueueContext = createContext<QueueState | undefined>(undefined);
 
 export function QueueProvider({ children }: { children: ReactNode }) {
+  const { user } = useApp();
   const [operators, setOperators] = useState<Operator[]>([]);
   const [currentQueue, setCurrentQueue] = useState<QueueOperator[]>([]);
   const [currentQueueData, setCurrentQueueData] = useState<Queue | null>(null);
@@ -123,69 +125,32 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const fetchOperators = useCallback(async () => {
-    if (!supabase) return;
-    const { data, error } = await supabase
-      .from('operadores')
-      .select('*')
-      .order('posicao_fixa', { ascending: true, nullsFirst: false })
-      .order('nome', { ascending: true });
-    
-    if (error) {
-      console.error('Error fetching operators:', error);
-      return;
+    try {
+      const { data } = await apiGet<{ data: Operator[] }>('/api/queue/operators');
+      setOperators(data || []);
+    } catch (err) {
+      console.error('Error fetching operators:', err);
     }
-    setOperators(data || []);
   }, []);
 
   const fetchCurrentQueue = useCallback(async (dateStr: string = format(new Date(), 'yyyy-MM-dd')) => {
-    if (!supabase) return;
     setIsLoading(true);
     try {
       // Refresh available dates list too
-      const { data: dateData } = await supabase
-        .from('filas')
-        .select('data')
-        .order('data', { ascending: false });
-      
-      if (dateData) {
-        setAvailableDates(Array.from(new Set(dateData.map((f: any) => f.data))) as string[]);
-      }
+      const { data: dates } = await apiGet<{ data: string[] }>('/api/queue/filas?dates=true');
+      setAvailableDates(dates || []);
 
       // Get activities for the day
-      const { data: activitiesData } = await supabase
-        .from('atividades')
-        .select('*, operador:operadores(*)')
-        .eq('data', dateStr)
-        .order('created_at', { ascending: false });
-      
+      const { data: activitiesData } = await apiGet<{ data: Activity[] }>(`/api/queue/atividades?date=${dateStr}`);
       setActivities(activitiesData || []);
 
       // Get the queue for the date
-      const { data: queueData, error: queueError } = await supabase
-        .from('filas')
-        .select('*')
-        .eq('data', dateStr)
-        .single();
-
-      if (queueError && queueError.code !== 'PGRST116') {
-        throw queueError;
-      }
+      const { data: queueData } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${dateStr}`);
 
       if (queueData) {
         setCurrentQueueData(queueData);
         // Get operators in the queue
-        const { data: queueOps, error: opsError } = await supabase
-          .from('fila_operadores')
-          .select(`
-            *,
-            operador:operadores(*),
-            checklist:checklists(*),
-            almoco:almocos(*)
-          `)
-          .eq('fila_id', queueData.id)
-          .order('ordem');
-
-        if (opsError) throw opsError;
+        const { data: queueOps } = await apiGet<{ data: QueueOperator[] }>(`/api/queue/fila-operadores?filaId=${queueData.id}`);
         setCurrentQueue(queueOps || []);
       } else {
         setCurrentQueueData(null);
@@ -200,15 +165,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchActivities = async (dateStr: string = format(new Date(), 'yyyy-MM-dd')) => {
-    if (!supabase) return;
     try {
-      const { data, error } = await supabase
-        .from('atividades')
-        .select('*, operador:operadores(*)')
-        .eq('data', dateStr)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
+      const { data } = await apiGet<{ data: Activity[] }>(`/api/queue/atividades?date=${dateStr}`);
       setActivities(data || []);
     } catch (err: any) {
       console.error('Error fetching activities:', err);
@@ -216,33 +174,21 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const fetchAvailableDates = useCallback(async () => {
-    if (!supabase) return;
     try {
-      const { data } = await supabase
-        .from('filas')
-        .select('data')
-        .order('data', { ascending: false });
-      
-      if (data) {
-        setAvailableDates(Array.from(new Set(data.map((f: any) => f.data))) as string[]);
-      }
+      const { data } = await apiGet<{ data: string[] }>('/api/queue/filas?dates=true');
+      setAvailableDates(data || []);
     } catch (err) {
       console.error('Error fetching available dates:', err);
     }
   }, []);
 
   const generateDailyQueue = useCallback(async (date: Date = new Date()) => {
-    if (!supabase) return;
     setIsLoading(true);
     try {
       const dateStr = format(date, 'yyyy-MM-dd');
-      
+
       // Check if queue already exists
-      const { data: existingQueue } = await supabase
-        .from('filas')
-        .select('id')
-        .eq('data', dateStr)
-        .maybeSingle();
+      const { data: existingQueue } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${dateStr}`);
 
       let queueId = existingQueue?.id;
 
@@ -255,26 +201,19 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         }
 
         // Check if it has operators
-        const { data: existingOps } = await supabase
-          .from('fila_operadores')
-          .select('id')
-          .eq('fila_id', queueId);
-        
+        const { data: existingOps } = await apiGet<{ data: { id: string }[] }>(`/api/queue/fila-operadores?filaId=${queueId}&plain=true`);
+
         if (existingOps && existingOps.length > 0) {
           // If we are here, it's today or future.
           // We only auto-load if we are NOT explicitly refactoring.
-          // Since generateDailyQueue is called for refactoring too, 
+          // Since generateDailyQueue is called for refactoring too,
           // we should check if we want to delete existing ops.
-          
+
           // For now, let's assume if it exists and we call this, we want to REFACTOR (update)
           // but only if no activities have been recorded yet for today to avoid data loss.
-          const { data: hasActivities } = await supabase
-            .from('atividades')
-            .select('id')
-            .eq('data', dateStr)
-            .limit(1);
+          const { data: activitiesToday } = await apiGet<{ data: Activity[] }>(`/api/queue/atividades?date=${dateStr}`);
 
-          if (hasActivities && hasActivities.length > 0 && isToday(date)) {
+          if (activitiesToday && activitiesToday.length > 0 && isToday(date)) {
             await fetchCurrentQueue(dateStr);
             return;
           }
@@ -283,30 +222,18 @@ export function QueueProvider({ children }: { children: ReactNode }) {
 
       // Get previous queue for rotation
       const yesterday = format(startOfDay(new Date(date.getTime() - 86400000)), 'yyyy-MM-dd');
-      const { data: prevQueue } = await supabase
-        .from('filas')
-        .select('id, responsavel_passagem_turno_id')
-        .eq('data', yesterday)
-        .maybeSingle();
+      const { data: prevQueue } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${yesterday}`);
 
       let baseOrder: string[] = [];
       if (prevQueue) {
-        const { data: prevOps } = await supabase
-          .from('fila_operadores')
-          .select('operador_id')
-          .eq('fila_id', prevQueue.id)
-          .order('ordem');
-        
+        const { data: prevOps } = await apiGet<{ data: { operador_id: string }[] }>(`/api/queue/fila-operadores?filaId=${prevQueue.id}&plain=true`);
         if (prevOps) {
           baseOrder = prevOps.map(o => o.operador_id);
         }
       }
 
       // Get active operators
-      const { data: activeOps } = await supabase
-        .from('operadores')
-        .select('*')
-        .eq('ignorar_na_fila', false);
+      const { data: activeOps } = await apiGet<{ data: Operator[] }>('/api/queue/operators?activeOnly=true');
 
       if (!activeOps) throw new Error('Nenhum operador encontrado.');
 
@@ -328,7 +255,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         // Sort livreOps based on their relative order in baseOrder
         const livreInBase = baseOrder.filter(id => livreOps.some(op => op.id === id));
         const livreNotInBase = livreOps.filter(op => !baseOrder.includes(op.id));
-        
+
         const sortedLivre = [
           ...livreInBase.map(id => livreOps.find(op => op.id === id)).filter(Boolean) as Operator[],
           ...livreNotInBase
@@ -350,10 +277,10 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       if (totalOps === 0) throw new Error('Nenhum operador disponível para gerar a fila.');
 
       const finalOrder: Operator[] = new Array(totalOps).fill(null);
-      
+
       // Place fixed (avoiding duplicates or out of bounds)
       const livrePool = [...rotatedLivre];
-      
+
       fixedOps.forEach(op => {
         const pos = (op.posicao_fixa || 1) - 1;
         if (pos >= 0 && pos < totalOps && finalOrder[pos] === null) {
@@ -384,33 +311,21 @@ export function QueueProvider({ children }: { children: ReactNode }) {
 
       // 5. Create or update queue
       if (!queueId) {
-        const { data: newQueue, error: createError } = await supabase
-          .from('filas')
-          .insert([{ 
-            data: dateStr,
-            responsavel_passagem_turno_id: shiftHandoverId
-          }])
-          .select()
-          .single();
-
-        if (createError) throw createError;
+        const { data: newQueue } = await apiSend<{ data: Queue }>('/api/queue/filas', 'POST', {
+          data: dateStr,
+          responsavel_passagem_turno_id: shiftHandoverId
+        });
         queueId = newQueue.id;
       } else {
         // Update shift handover for refactor
-        await supabase
-          .from('filas')
-          .update({ responsavel_passagem_turno_id: shiftHandoverId })
-          .eq('id', queueId);
+        await apiSend('/api/queue/filas', 'PATCH', { id: queueId, responsavel_passagem_turno_id: shiftHandoverId });
       }
 
       // 6. Sync operators into queue (Upsert logic to preserve IDs and linked data)
-      const { data: existingQueueOps } = await supabase
-        .from('fila_operadores')
-        .select('id, operador_id')
-        .eq('fila_id', queueId);
+      const { data: existingQueueOps } = await apiGet<{ data: { id: string; operador_id: string }[] }>(`/api/queue/fila-operadores?filaId=${queueId}&plain=true`);
 
       const existingOpsMap = new Map((existingQueueOps || []).map(op => [op.operador_id, op.id]));
-      
+
       const opsToUpsert = cleanedOrder.map((op, index) => {
         const existingId = existingOpsMap.get(op.id);
         const record: any = {
@@ -425,12 +340,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
 
       if (opsToUpsert.length === 0) return;
 
-      const { data: upsertedOps, error: upsertError } = await supabase
-        .from('fila_operadores')
-        .upsert(opsToUpsert)
-        .select();
-
-      if (upsertError) throw upsertError;
+      const { data: upsertedOps } = await apiSend<{ data: any[] }>('/api/queue/fila-operadores', 'PUT', { rows: opsToUpsert });
 
       // Delete operators that are no longer in the final order
       const finalOpIds = new Set(cleanedOrder.map(op => op.id));
@@ -439,52 +349,35 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         .map(op => op.id);
 
       if (idsToDelete.length > 0) {
-        await supabase.from('fila_operadores').delete().in('id', idsToDelete);
+        await apiSend('/api/queue/fila-operadores', 'DELETE', { ids: idsToDelete });
       }
 
       // 7. Ensure checklists and lunches exist for all operators
       if (upsertedOps && upsertedOps.length > 0) {
         const opIds = upsertedOps.map(op => op.id);
-        
-        // Check existing checklists
-        const { data: existingChecklists } = await supabase
-          .from('checklists')
-          .select('fila_operador_id')
-          .in('fila_operador_id', opIds);
-        
-        const existingChecklistIds = new Set(existingChecklists?.map(c => c.fila_operador_id) || []);
-        const checklistsToInsert = upsertedOps
-          .filter(op => !existingChecklistIds.has(op.id))
-          .map(op => ({ fila_operador_id: op.id }));
 
-        if (checklistsToInsert.length > 0) {
-          await supabase.from('checklists').insert(checklistsToInsert);
+        // Check existing checklists
+        const { data: existingChecklistIds } = await apiGet<{ data: string[] }>(`/api/queue/checklists?filaOperadorIds=${opIds.join(',')}`);
+        const existingChecklistSet = new Set(existingChecklistIds || []);
+        const checklistIdsToInsert = opIds.filter(id => !existingChecklistSet.has(id));
+
+        if (checklistIdsToInsert.length > 0) {
+          await apiSend('/api/queue/checklists', 'POST', { filaOperadorIds: checklistIdsToInsert });
         }
 
         // Check existing lunches
-        const { data: existingLunches } = await supabase
-          .from('almocos')
-          .select('fila_operador_id')
-          .in('fila_operador_id', opIds);
-        
-        const existingLunchIds = new Set(existingLunches?.map(l => l.fila_operador_id) || []);
-        const lunchesToInsert = upsertedOps
-          .filter(op => !existingLunchIds.has(op.id))
-          .map(op => ({ fila_operador_id: op.id }));
+        const { data: existingLunchIds } = await apiGet<{ data: string[] }>(`/api/queue/almocos?filaOperadorIds=${opIds.join(',')}`);
+        const existingLunchSet = new Set(existingLunchIds || []);
+        const lunchIdsToInsert = opIds.filter(id => !existingLunchSet.has(id));
 
-        if (lunchesToInsert.length > 0) {
-          await supabase.from('almocos').insert(lunchesToInsert);
+        if (lunchIdsToInsert.length > 0) {
+          await apiSend('/api/queue/almocos', 'POST', { filaOperadorIds: lunchIdsToInsert });
         }
       }
 
       fetchCurrentQueue(dateStr);
     } catch (err: any) {
-      console.error('Error generating queue:', {
-        message: err.message,
-        details: err.details,
-        hint: err.hint,
-        code: err.code
-      });
+      console.error('Error generating queue:', err);
       setError(err.message || 'Erro desconhecido ao gerar fila');
     } finally {
       setIsLoading(false);
@@ -492,15 +385,16 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   }, [fetchCurrentQueue]);
 
   const updateQueueOrder = async (newOrder: QueueOperator[]) => {
-    if (!supabase || !currentQueueData) return;
+    if (!currentQueueData) return;
     try {
       const updates = newOrder.map((op, index) => ({
         id: op.id,
+        fila_id: op.fila_id,
+        operador_id: op.operador_id,
         ordem: index
       }));
 
-      const { error } = await supabase.from('fila_operadores').upsert(updates);
-      if (error) throw error;
+      await apiSend('/api/queue/fila-operadores', 'PUT', { rows: updates });
 
       // New Rule: The 1st operator after fixed positions becomes the "Passagem" holder
       // and will be the last in the next day's queue.
@@ -508,14 +402,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       const handoverOp = firstNonFixed || newOrder[0];
 
       if (handoverOp && handoverOp.operador_id !== currentQueueData.responsavel_passagem_turno_id) {
-        const { error: queueError } = await supabase
-          .from('filas')
-          .update({ responsavel_passagem_turno_id: handoverOp.operador_id })
-          .eq('id', currentQueueData.id);
-        
-        if (!queueError) {
-          setCurrentQueueData(prev => prev ? { ...prev, responsavel_passagem_turno_id: handoverOp.operador_id } : null);
-        }
+        await apiSend('/api/queue/filas', 'PATCH', { id: currentQueueData.id, responsavel_passagem_turno_id: handoverOp.operador_id });
+        setCurrentQueueData(prev => prev ? { ...prev, responsavel_passagem_turno_id: handoverOp.operador_id } : null);
       }
 
       setCurrentQueue(newOrder);
@@ -525,16 +413,10 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateChecklist = async (id: string, field: keyof Checklist, value: boolean) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('checklists')
-        .update({ [field]: value })
-        .eq('fila_operador_id', id);
-      
-      if (error) throw error;
-      
-      setCurrentQueue(prev => prev.map(op => 
+      await apiSend('/api/queue/checklists', 'PATCH', { filaOperadorId: id, field, value });
+
+      setCurrentQueue(prev => prev.map(op =>
         op.id === id ? { ...op, checklist: { ...op.checklist!, [field]: value } } : op
       ));
     } catch (err: any) {
@@ -543,16 +425,10 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateLunch = async (id: string, horario: string) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('almocos')
-        .update({ horario })
-        .eq('fila_operador_id', id);
-      
-      if (error) throw error;
-      
-      setCurrentQueue(prev => prev.map(op => 
+      await apiSend('/api/queue/almocos', 'PATCH', { filaOperadorId: id, horario });
+
+      setCurrentQueue(prev => prev.map(op =>
         op.id === id ? { ...op, almoco: { ...op.almoco!, horario } } : op
       ));
     } catch (err: any) {
@@ -561,24 +437,18 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateInfo = async (id: string, field: 'atendimento_tipo' | 'atendimento_hora' | 'atendimento_obs', value: string) => {
-    if (!supabase) return;
     try {
       const op = currentQueue.find(o => o.id === id);
       const updates: any = { [field]: value };
-      
+
       // Auto-fill time if empty and user is typing obs or changing type
       if ((field === 'atendimento_obs' || field === 'atendimento_tipo') && (!op?.atendimento_hora)) {
         updates.atendimento_hora = format(new Date(), 'HH:mm');
       }
 
-      const { error } = await supabase
-        .from('fila_operadores')
-        .update(updates)
-        .eq('id', id);
+      await apiSend('/api/queue/fila-operadores', 'PATCH', { id, ...updates });
 
-      if (error) throw error;
-      
-      setCurrentQueue(prev => prev.map(o => 
+      setCurrentQueue(prev => prev.map(o =>
         o.id === id ? { ...o, ...updates } : o
       ));
     } catch (err: any) {
@@ -587,14 +457,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateOperatorStatus = async (id: string, status: 'Ativo' | 'Ausente', ausenteAte?: string | null) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('operadores')
-        .update({ status, ausente_ate: ausenteAte })
-        .eq('id', id);
-      
-      if (error) throw error;
+      await apiSend('/api/queue/operators', 'PATCH', { id, status, ausente_ate: ausenteAte });
       fetchOperators();
     } catch (err: any) {
       console.error('Error updating operator status:', err);
@@ -602,14 +466,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateOperatorSchedule = async (id: string, horario: string) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('operadores')
-        .update({ horario_trabalho: horario })
-        .eq('id', id);
-
-      if (error) throw error;
+      await apiSend('/api/queue/operators', 'PATCH', { id, horario_trabalho: horario });
       setOperators(prev => prev.map(op => op.id === id ? { ...op, horario_trabalho: horario } : op));
     } catch (err: any) {
       console.error('Error updating operator schedule:', err);
@@ -617,14 +475,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateOperatorPosition = async (id: string, posicao: number | null) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('operadores')
-        .update({ posicao_fixa: posicao })
-        .eq('id', id);
-
-      if (error) throw error;
+      await apiSend('/api/queue/operators', 'PATCH', { id, posicao_fixa: posicao });
       setOperators(prev => prev.map(op => op.id === id ? { ...op, posicao_fixa: posicao } : op));
     } catch (err: any) {
       console.error('Error updating operator position:', err);
@@ -632,14 +484,9 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateQueueHandover = async (operadorId: string | null) => {
-    if (!supabase || !currentQueueData) return;
+    if (!currentQueueData) return;
     try {
-      const { error } = await supabase
-        .from('filas')
-        .update({ responsavel_passagem_turno_id: operadorId })
-        .eq('id', currentQueueData.id);
-      
-      if (error) throw error;
+      await apiSend('/api/queue/filas', 'PATCH', { id: currentQueueData.id, responsavel_passagem_turno_id: operadorId });
       setCurrentQueueData(prev => prev ? { ...prev, responsavel_passagem_turno_id: operadorId } : null);
     } catch (err: any) {
       console.error('Error updating handover:', err);
@@ -647,21 +494,15 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const addOperatorToQueue = async (operadorId: string) => {
-    if (!supabase || !currentQueueData) return;
+    if (!currentQueueData) return;
     try {
       const filaId = currentQueueData.id;
       const nextOrder = currentQueue.length;
 
-      const { data: newOp, error: insertError } = await supabase
-        .from('fila_operadores')
-        .insert([{ fila_id: filaId, operador_id: operadorId, ordem: nextOrder }])
-        .select()
-        .single();
+      const { data: newOp } = await apiSend<{ data: { id: string } }>('/api/queue/fila-operadores', 'POST', { fila_id: filaId, operador_id: operadorId, ordem: nextOrder });
 
-      if (insertError) throw insertError;
-
-      await supabase.from('checklists').insert([{ fila_operador_id: newOp.id }]);
-      await supabase.from('almocos').insert([{ fila_operador_id: newOp.id }]);
+      await apiSend('/api/queue/checklists', 'POST', { filaOperadorIds: [newOp.id] });
+      await apiSend('/api/queue/almocos', 'POST', { filaOperadorIds: [newOp.id] });
 
       fetchCurrentQueue();
     } catch (err: any) {
@@ -670,14 +511,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const removeOperatorFromQueue = async (queueOperatorId: string) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('fila_operadores')
-        .delete()
-        .eq('id', queueOperatorId);
-      
-      if (error) throw error;
+      await apiSend('/api/queue/fila-operadores', 'DELETE', { ids: [queueOperatorId] });
       fetchCurrentQueue();
     } catch (err: any) {
       console.error('Error removing operator from queue:', err);
@@ -685,26 +520,11 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const fetchHistory = async (date: string) => {
-    if (!supabase) return;
     try {
-      const { data: queueData } = await supabase
-        .from('filas')
-        .select('*')
-        .eq('data', date)
-        .single();
+      const { data: queueData } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${date}`);
 
       if (queueData) {
-        const { data: queueOps } = await supabase
-          .from('fila_operadores')
-          .select(`
-            *,
-            operador:operadores(*),
-            checklist:checklists(*),
-            almoco:almocos(*)
-          `)
-          .eq('fila_id', queueData.id)
-          .order('ordem');
-
+        const { data: queueOps } = await apiGet<{ data: QueueOperator[] }>(`/api/queue/fila-operadores?filaId=${queueData.id}`);
         setHistoryQueues(prev => ({ ...prev, [date]: queueOps || [] }));
       }
     } catch (err: any) {
@@ -713,21 +533,8 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const fetchSchedules = useCallback(async () => {
-    if (!supabase) return;
     try {
-      const { data, error } = await supabase
-        .from('escalas_por_data')
-        .select('*')
-        .order('data', { ascending: true });
-      
-      if (error) {
-        if (error.code === 'PGRST116' || error.message?.includes('relation "escalas_por_data" does not exist')) {
-          console.warn('Tabela escalas_por_data não encontrada.');
-          setSchedules([]);
-          return;
-        }
-        throw error;
-      }
+      const { data } = await apiGet<{ data: Schedule[] }>('/api/queue/escalas');
       setSchedules(data || []);
     } catch (err: any) {
       console.error('Error fetching schedules:', err);
@@ -735,44 +542,10 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateSchedule = async (tipo: 'terca' | 'quarta' | 'presencial', names: string, dateStr: string) => {
-    if (!supabase) return;
-    let isUpdate = false;
-    let actionName = 'salvar';
     try {
-      // Check if exists
-      const { data: existing, error: fetchError } = await supabase
-        .from('escalas_por_data')
-        .select('id')
-        .eq('data', dateStr)
-        .eq('tipo', tipo)
-        .maybeSingle();
-
-      if (fetchError) {
-        console.error('Error fetching existing schedule:', fetchError);
-        throw fetchError;
-      }
-
-      isUpdate = !!existing;
-      actionName = isUpdate ? 'atualizar' : 'adicionar';
-      
-      let result;
-      if (existing) {
-        result = await supabase
-          .from('escalas_por_data')
-          .update({ nomes: names })
-          .eq('id', existing.id)
-          .select();
-      } else {
-        result = await supabase
-          .from('escalas_por_data')
-          .insert({ tipo, nomes: names, data: dateStr })
-          .select();
-      }
-      
-      if (result.error) throw result.error;
-      const data = result.data?.[0];
+      const { data } = await apiSend<{ data: Schedule }>('/api/queue/escalas', 'POST', { tipo, nomes: names, data: dateStr });
       if (!data) throw new Error('A operação foi concluída, mas nenhum dado foi retornado.');
-      
+
       setSchedules(prev => {
         const existingIdx = prev.findIndex(s => s.data === dateStr && s.tipo === tipo);
         if (existingIdx >= 0) {
@@ -783,40 +556,17 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         return [...prev, data].sort((a, b) => a.data.localeCompare(b.data));
       });
     } catch (err: any) {
-      // Inspecionar o erro de forma mais profunda antes de logar
-      const errorDetail = {
-        message: err?.message || (typeof err === 'string' ? err : 'Erro desconhecido'),
-        details: err?.details || null,
-        hint: err?.hint || null,
-        code: err?.code || null,
-        status: err?.status || null,
-        type: err?.name || 'Error'
-      };
+      const errorMessage = err?.message || (typeof err === 'string' ? err : 'Erro desconhecido');
+      console.error(`Error updating schedule:`, errorMessage);
 
-      if (errorDetail.message.includes('relation "escalas_por_data" does not exist') || errorDetail.code === '42P01') {
-        errorDetail.message = 'A tabela "escalas_por_data" não existe no banco de dados. Por favor, execute as migrações SQL.';
-      }
-
-      console.error(`Error updating schedule [${actionName}]:`, errorDetail);
-      console.error('Full error object:', err);
-
-      // Feedback para o usuário
       const typeLabel = tipo === 'presencial' ? 'Presencial' : (tipo === 'terca' ? 'Terça' : 'Quarta');
-      const userFriendlyMessage = `Erro ao ${actionName} "Escala: ${typeLabel}": ${errorDetail.message}`;
-      
-      // Se for erro de autenticação, podemos emitir um alerta ou log específico
-      const isAuthError = err?.status === 401 || 
-                         err?.code === '401' || 
-                         err?.message?.includes('Invalid Refresh Token') || 
-                         err?.message?.includes('JWT') ||
-                         err?.message?.includes('session');
+      const userFriendlyMessage = `Erro ao salvar "Escala: ${typeLabel}": ${errorMessage}`;
 
+      const isAuthError = err?.status === 401;
       if (isAuthError) {
-        console.warn('Authentication error detected in updateSchedule');
         if (typeof window !== 'undefined') {
           alert('Sessão expirada. Por favor, faça login novamente.');
-          localStorage.removeItem('systemsat-auth-token');
-          window.location.reload();
+          window.location.href = '/';
         }
       } else {
         if (typeof window !== 'undefined') {
@@ -827,32 +577,18 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteSchedule = async (id: string) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase.from('escalas_por_data').delete().eq('id', id);
-      if (error) throw error;
+      await apiSend('/api/queue/escalas?id=' + id, 'DELETE');
       setSchedules(prev => prev.filter(s => s.id !== id));
     } catch (err: any) {
       const errorMsg = err?.message || (typeof err === 'string' ? err : 'Erro desconhecido');
-      console.error('Error deleting schedule:', {
-        message: errorMsg,
-        details: err?.details,
-        hint: err?.hint,
-        code: err?.code,
-        status: err?.status,
-        fullError: err
-      });
-      
-      const isAuthError = err?.status === 401 || 
-                         err?.code === '401' || 
-                         err?.message?.includes('Invalid Refresh Token') || 
-                         err?.message?.includes('JWT');
+      console.error('Error deleting schedule:', errorMsg);
 
+      const isAuthError = err?.status === 401;
       if (isAuthError) {
         if (typeof window !== 'undefined') {
           alert('Sessão expirada. Por favor, faça login novamente.');
-          localStorage.removeItem('systemsat-auth-token');
-          window.location.reload();
+          window.location.href = '/';
         }
       } else {
         if (typeof window !== 'undefined') {
@@ -863,49 +599,44 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const completeActivity = async (id: string) => {
-    if (!supabase) return;
     try {
       const opToMove = currentQueue.find(op => op.id === id);
       if (!opToMove) return;
 
       const time = format(new Date(), 'HH:mm');
       const finalTime = opToMove.atendimento_hora || time;
-      
+
       // 1. Save to activities history
-      await supabase.from('atividades').insert([{
+      await apiSend('/api/queue/atividades', 'POST', {
         operador_id: opToMove.operador_id,
         tipo: opToMove.atendimento_tipo || 'Chamado',
         horario: finalTime,
         observacao: opToMove.atendimento_obs || '',
         data: format(new Date(), 'yyyy-MM-dd')
-      }]);
+      });
 
       // 2. Update the record (Reset fields for next turn)
       // Note: We keep checklist and lunch persistent as requested
-      const { error: updateError } = await supabase
-        .from('fila_operadores')
-        .update({ 
-          atendimento_hora: '',
-          atendimento_obs: '',
-          atendimento_tipo: 'Chamado' // Reset to default
-        })
-        .eq('id', id);
-
-      if (updateError) throw updateError;
+      await apiSend('/api/queue/fila-operadores', 'PATCH', {
+        id,
+        atendimento_hora: '',
+        atendimento_obs: '',
+        atendimento_tipo: 'Chamado' // Reset to default
+      });
 
       // 3. Move to end of queue
       const otherOps = currentQueue.filter(op => op.id !== id);
       const newOrder = [...otherOps, opToMove];
-      
+
       // Update local state first for immediate feedback
-      setCurrentQueue(newOrder.map((op, idx) => ({ 
-        ...op, 
+      setCurrentQueue(newOrder.map((op, idx) => ({
+        ...op,
         ordem: idx,
         atendimento_hora: op.id === id ? '' : op.atendimento_hora,
         atendimento_obs: op.id === id ? '' : op.atendimento_obs,
         atendimento_tipo: op.id === id ? 'Chamado' : op.atendimento_tipo
       })));
-      
+
       // Update database
       const updates = newOrder.map((op, idx) => ({
         id: op.id,
@@ -914,8 +645,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         ordem: idx
       }));
 
-      const { error: reorderError } = await supabase.from('fila_operadores').upsert(updates);
-      if (reorderError) throw reorderError;
+      await apiSend('/api/queue/fila-operadores', 'PUT', { rows: updates });
 
       // 4. Refresh activities
       fetchActivities();
@@ -925,49 +655,32 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteActivity = async (activityId: string) => {
-    if (!supabase) return;
     try {
       const activityToDelete = activities.find(a => a.id === activityId);
       if (!activityToDelete) return;
 
       // 1. Delete the activity
-      const { error: deleteError } = await supabase
-        .from('atividades')
-        .delete()
-        .eq('id', activityId);
-
-      if (deleteError) throw deleteError;
+      await apiSend('/api/queue/atividades?id=' + activityId, 'DELETE');
 
       // 2. Refresh activities list
       fetchActivities();
 
-      // 3. Check if it was the LAST activity for this operator today
-      const { data: lastActivity } = await supabase
-        .from('atividades')
-        .select('id')
-        .eq('operador_id', activityToDelete.operador_id)
-        .eq('data', format(new Date(), 'yyyy-MM-dd'))
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      // If no more activities for today, or the deleted one was the most recent,
-      // we might want to return them to the top of the queue.
-      // Let's check if they are currently at the END of the queue.
+      // 3. If they are currently at the END of the queue, return them to the top.
       const opInQueue = currentQueue.find(op => op.operador_id === activityToDelete.operador_id);
       if (opInQueue && opInQueue.ordem === currentQueue.length - 1) {
         // Move to front: ordem 0
         const otherOps = currentQueue.filter(op => op.id !== opInQueue.id);
         const newOrder = [opInQueue, ...otherOps];
-        
+
         const updates = newOrder.map((op, idx) => ({
           id: op.id,
+          fila_id: op.fila_id,
+          operador_id: op.operador_id,
           ordem: idx
         }));
 
-        const { error: reorderError } = await supabase.from('fila_operadores').upsert(updates);
-        if (reorderError) throw reorderError;
-        
+        await apiSend('/api/queue/fila-operadores', 'PUT', { rows: updates });
+
         setCurrentQueue(newOrder.map((op, idx) => ({ ...op, ordem: idx })));
       }
     } catch (err: any) {
@@ -976,37 +689,18 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const exportQueueReport = async (startDate: string, endDate: string) => {
-    if (!supabase) return [];
     try {
       // Fetch all queues in range
-      const { data: queues, error: queuesError } = await supabase
-        .from('filas')
-        .select('*')
-        .gte('data', startDate)
-        .lte('data', endDate);
-
-      if (queuesError) throw queuesError;
+      const { data: queues } = await apiGet<{ data: Queue[] }>(`/api/queue/filas?start=${startDate}&end=${endDate}`);
 
       const reportData: any[] = [];
 
       for (const queue of queues) {
         // Fetch queue operators
-        const { data: queueOps, error: opsError } = await supabase
-          .from('fila_operadores')
-          .select('*, operador:operadores(*), checklist:checklists(*), almoco:almocos(*)')
-          .eq('fila_id', queue.id)
-          .order('ordem');
-
-        if (opsError) throw opsError;
+        const { data: queueOps } = await apiGet<{ data: QueueOperator[] }>(`/api/queue/fila-operadores?filaId=${queue.id}`);
 
         // Fetch activities for this specifically targeted date to be sure
-        const { data: activityData, error: activitiesError } = await supabase
-          .from('atividades')
-          .select('*, operador:operadores(*)')
-          .eq('data', queue.data)
-          .order('created_at', { ascending: true });
-
-        if (activitiesError) throw activitiesError;
+        const { data: activityData } = await apiGet<{ data: Activity[] }>(`/api/queue/atividades?date=${queue.data}`);
 
         // Group activities by operator
         const activitiesByOp: Record<string, any[]> = {};
@@ -1023,7 +717,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         if (queueOps) {
           queueOps.forEach(op => {
             const opActivities = activitiesByOp[op.operador_id] || [];
-            
+
             reportData.push({
               Data: queue.data,
               Ordem: op.ordem + 1,
@@ -1054,10 +748,14 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    fetchOperators();
-    fetchCurrentQueue();
-    fetchSchedules();
-  }, [fetchOperators, fetchCurrentQueue, fetchSchedules]);
+    // Queue routes require an authenticated session now (unlike the previous
+    // permissive Supabase RLS), so wait for login before fetching.
+    if (user) {
+      fetchOperators();
+      fetchCurrentQueue();
+      fetchSchedules();
+    }
+  }, [user, fetchOperators, fetchCurrentQueue, fetchSchedules]);
 
   return (
     <QueueContext.Provider value={{

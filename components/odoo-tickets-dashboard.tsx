@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '@/context/app-context';
 import FilterBar from './filter-bar';

@@ -4,7 +4,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useApp, UserPermissions } from '@/context/app-context';
 import { CollaboratorStats } from '@/lib/data-utils';
 import dynamic from 'next/dynamic';
-import { supabase } from '@/lib/supabase';
 
 const FileUpload = dynamic(() => import('@/components/file-upload'), { ssr: false, loading: () => <div className="h-64 flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> });
 const Dashboard = dynamic(() => import('@/components/dashboard'), { ssr: false, loading: () => <div className="h-64 flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> });
@@ -65,7 +64,8 @@ export default function Page() {
     user,
     userRole,
     userPermissions,
-    isAuthReady
+    isAuthReady,
+    refreshSession
   } = useApp();
   
   const [view, setView] = useState<'upload' | 'dashboard' | 'ranking' | 'settings' | 'rawData' | 'comparison' | 'bitrixTickets' | 'odooTickets' | 'odooDashboard' | 'general' | 'trainingDashboard' | 'bitrixDashboard' | 'queue' | 'knowledgeBase'>('general');
@@ -117,14 +117,12 @@ export default function Page() {
   }, [view, userPermissions, isAuthReady, user, hasPermission]);
 
   const handleLogout = async () => {
-    const supabaseClient = supabase;
-    if (supabaseClient) {
-      try {
-        await supabaseClient.auth.signOut();
-        setView('general');
-      } catch (err) {
-        console.error('Erro ao sair:', err);
-      }
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      await refreshSession();
+      setView('general');
+    } catch (err) {
+      console.error('Erro ao sair:', err);
     }
   };
 

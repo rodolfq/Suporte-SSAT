@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { requireSession } from '@/lib/api-auth';
+import { matchKbChunks } from '@/lib/db/kb';
 import { GoogleGenerativeAI, TaskType } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || '');
@@ -7,6 +8,7 @@ const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2-pre
 const chatModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 export async function POST(req: NextRequest) {
+  if (!requireSession(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const { message } = await req.json();
 
@@ -22,22 +24,9 @@ export async function POST(req: NextRequest) {
     } as any);
     const queryEmbedding = embedResult.embedding.values;
 
-    if (!supabase) {
-      return NextResponse.json({ error: 'Supabase não inicializado.' }, { status: 500 });
-    }
-
-    // 2. Search for relevant chunks in Supabase
-    console.log('Searching Supabase with embedding length:', queryEmbedding.length);
-    const { data: chunks, error: searchError } = await supabase.rpc('match_kb_chunks', {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.2,
-      match_count: 5
-    });
-
-    if (searchError) {
-      console.error('Search error:', searchError);
-      throw searchError;
-    }
+    // 2. Search for relevant chunks
+    console.log('Searching kb_chunks with embedding length:', queryEmbedding.length);
+    const chunks = await matchKbChunks(queryEmbedding, 0.2, 5);
 
     console.log('Chunks found in API:', chunks?.length || 0);
 

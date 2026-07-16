@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { getSecret } from '@/lib/secrets-server';
+import { getSecret } from '@/lib/db/secrets';
 
 async function fetchBitrix(method: string, params: any = {}) {
   const webhook = await getSecret('bitrix_webhook');

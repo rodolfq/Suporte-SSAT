@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-
-import { getSecret } from '@/lib/secrets-server';
+import { listBitrixSchedules } from '@/lib/db/app-data';
+import { getSecret } from '@/lib/db/secrets';
 
 async function fetchBitrix(method: string, params: any = {}) {
   const webhook = await getSecret('bitrix_webhook');
@@ -40,17 +39,11 @@ async function fetchBitrix(method: string, params: any = {}) {
 }
 
 export async function GET() {
-  const supabaseClient = supabase;
-  if (!supabaseClient) return NextResponse.json({ error: 'Supabase not initialized' }, { status: 500 });
-
   try {
     // 1. Get all active schedules
-    const { data: schedules, error: schedError } = await supabaseClient
-      .from('bitrix_schedules')
-      .select('*')
-      .eq('active', true);
+    const allSchedules = await listBitrixSchedules();
+    const schedules = allSchedules.filter((s: any) => s.active);
 
-    if (schedError) throw schedError;
     if (!schedules || schedules.length === 0) {
       return NextResponse.json({ message: 'No active schedules found' });
     }

@@ -18,7 +18,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { supabase } from '@/lib/supabase';
+import { apiGet, apiSend } from '@/lib/api-client';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI } from "@google/genai";
 import * as pdfjs from 'pdfjs-dist';
@@ -73,33 +73,21 @@ export default function KnowledgeBase() {
   }, []);
 
   const fetchDailyUsage = async () => {
-    if (!supabase) return;
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const { data, error } = await supabase
-      .from('ai_usage_logs')
-      .select('total_tokens')
-      .gte('created_at', today.toISOString());
-    
-    if (!error && data) {
-      const total = data.reduce((acc, curr) => acc + (curr.total_tokens || 0), 0);
-      setDailyUsage({
-        queries: data.length,
-        tokens: total
-      });
+    try {
+      const usage = await apiGet<{ queries: number; tokens: number }>('/api/kb/usage');
+      setDailyUsage(usage);
+    } catch (err) {
+      console.error('Error fetching usage:', err);
     }
   };
 
   const logUsage = async (action: string, model: string, tokens: number) => {
-    if (!supabase) return;
-    await supabase.from('ai_usage_logs').insert([{
-      action_type: action,
-      model_name: model,
-      total_tokens: tokens
-    }]);
-    fetchDailyUsage();
+    try {
+      await apiSend('/api/kb/usage', 'POST', { action_type: action, model_name: model, total_tokens: tokens });
+      fetchDailyUsage();
+    } catch (err) {
+      console.error('Error logging usage:', err);
+    }
   };
 
   useEffect(() => {
@@ -107,29 +95,24 @@ export default function KnowledgeBase() {
   }, [messages]);
 
   const fetchDocuments = async () => {
-    if (!supabase) return;
-    const { data, error } = await supabase
-      .from('kb_documents')
-      .select('*')
-      .order('created_at', { ascending: false });
-    
-    if (!error && data) setDocuments(data);
+    try {
+      const { data } = await apiGet<{ data: Document[] }>('/api/kb/documents');
+      setDocuments(data || []);
 
-    // Fetch total chunks for debugging
-    const { count } = await supabase
-      .from('kb_chunks')
-      .select('*', { count: 'exact', head: true });
-    setTotalChunks(count || 0);
+      const { count } = await apiGet<{ count: number }>('/api/kb/chunks');
+      setTotalChunks(count || 0);
+    } catch (err) {
+      console.error('Error fetching documents:', err);
+    }
   };
 
   const fetchNotes = async () => {
-    if (!supabase) return;
-    const { data, error } = await supabase
-      .from('kb_notes')
-      .select('*')
-      .order('created_at', { ascending: false });
-    
-    if (!error && data) setNotes(data);
+    try {
+      const { data } = await apiGet<{ data: Note[] }>('/api/kb/notes');
+      setNotes(data || []);
+    } catch (err) {
+      console.error('Error fetching notes:', err);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -140,9 +123,6 @@ export default function KnowledgeBase() {
     setUploadStatus(null);
 
     try {
-      if (!supabase) {
-        throw new Error('Supabase não está configurado. Verifique as chaves no painel Secrets.');
-      }
       let text = '';
 
       if (file.type === 'application/pdf') {
@@ -188,13 +168,7 @@ export default function KnowledgeBase() {
       }
 
       // 1. Create document record
-      const { data: doc, error: docError } = await supabase!
-        .from('kb_documents')
-        .insert([{ title: file.name, file_type: file.type }])
-        .select()
-        .single();
-
-      if (docError) throw docError;
+      const { data: doc } = await apiSend<{ data: { id: string } }>('/api/kb/documents', 'POST', { title: file.name, file_type: file.type });
 
       // 2. Chunk and Embed
       const chunks: string[] = [];
@@ -235,45 +209,11 @@ export default function KnowledgeBase() {
             throw new Error('ID do documento não encontrado após inserção.');
           }
 
-          const { error: chunkError } = await supabase!
-            .from('kb_chunks')
-            .insert([{
-              document_id: doc.id,
-              content: chunk,
-              embedding: embedding
-            }]);
-          
-          if (chunkError) {
-            console.error('Error saving chunk - Full Error Object:', chunkError);
-            // Try to log properties manually in case it's not a plain object
-            Object.keys(chunkError).forEach(key => {
-              console.log(`chunkError[${key}]:`, (chunkError as any)[key]);
-            });
-            
-            console.error('Error message:', chunkError.message);
-            console.error('Error code:', chunkError.code);
-            console.error('Error details:', chunkError.details);
-            console.error('Error hint:', chunkError.hint);
-            
-            // Se o erro for de dimensão (22000 no Postgres)
-            if (chunkError.code === '22000' || chunkError.message?.includes('dimensions')) {
-              setUploadStatus({ 
-                type: 'error', 
-                message: 'Erro de dimensão: O banco de dados espera 768 dimensões. O código foi ajustado para limitar a saída do Gemini para 768. Por favor, certifique-se de que sua tabela kb_chunks use vector(768).' 
-              });
-              return;
-            }
-            
-            // Se o erro for de tabela inexistente (42P01 no Postgres)
-            if (chunkError.code === '42P01') {
-              setUploadStatus({ 
-                type: 'error', 
-                message: 'Erro de banco de dados: A tabela "kb_chunks" não existe. Por favor, execute o script SQL de migração no painel do Supabase.' 
-              });
-              return; // Para o processamento
-            }
-          } else {
+          try {
+            await apiSend('/api/kb/chunks', 'POST', { document_id: doc.id, content: chunk, embedding });
             savedChunks++;
+          } catch (chunkError: any) {
+            console.error('Error saving chunk:', chunkError);
           }
         } catch (chunkError: any) {
           console.error('Erro ao processar chunk:', chunkError);
@@ -320,11 +260,6 @@ export default function KnowledgeBase() {
     setIsChatLoading(true);
 
     try {
-      if (!supabase) {
-        setMessages(prev => [...prev, { role: 'assistant', content: 'Erro: Supabase não configurado.' }]);
-        return;
-      }
-
       // 1. Generate embedding for query
       const embedResponse = await ai.models.embedContent({
         model: "gemini-embedding-2-preview",
@@ -339,18 +274,13 @@ export default function KnowledgeBase() {
         throw new Error('Não foi possível gerar o embedding para a sua pergunta.');
       }
 
-      // 2. Search Supabase
-      console.log('Searching Supabase with embedding:', queryEmbedding.slice(0, 5), '...');
-      const { data: chunks, error: searchError } = await supabase!.rpc('match_kb_chunks', {
+      // 2. Search knowledge base
+      console.log('Searching kb_chunks with embedding:', queryEmbedding.slice(0, 5), '...');
+      const { data: chunks } = await apiSend<{ data: any[] }>('/api/kb/search', 'POST', {
         query_embedding: queryEmbedding,
         match_threshold: 0.2, // Lowered threshold for better recall
         match_count: 5
       });
-
-      if (searchError) {
-        console.error('Supabase RPC error:', searchError);
-        throw searchError;
-      }
 
       console.log('Chunks found:', chunks?.length || 0);
       if (chunks && chunks.length > 0) {
@@ -406,15 +336,21 @@ RESPOSTA:
   };
 
   const deleteDocument = async (id: string) => {
-    if (!supabase) return;
-    const { error } = await supabase.from('kb_documents').delete().eq('id', id);
-    if (!error) fetchDocuments();
+    try {
+      await apiSend(`/api/kb/documents?id=${id}`, 'DELETE');
+      fetchDocuments();
+    } catch (err) {
+      console.error('Error deleting document:', err);
+    }
   };
 
   const deleteNote = async (id: string) => {
-    if (!supabase) return;
-    const { error } = await supabase.from('kb_notes').delete().eq('id', id);
-    if (!error) fetchNotes();
+    try {
+      await apiSend(`/api/kb/notes?id=${id}`, 'DELETE');
+      fetchNotes();
+    } catch (err) {
+      console.error('Error deleting note:', err);
+    }
   };
 
   return (

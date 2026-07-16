@@ -22,12 +22,11 @@ const Login = dynamic(() => import('@/components/login'), { ssr: false });
 
 export default function TicketsDashboardPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const { user, isAuthReady, supabase } = useApp();
+  const { user, isAuthReady, refreshSession } = useApp();
 
   const handleLogout = async () => {
-    if (supabase) {
-      await supabase.auth.signOut();
-    }
+    await fetch('/api/auth/logout', { method: 'POST' });
+    await refreshSession();
   };
 
   if (!isAuthReady) {

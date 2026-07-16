@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import { useApp, UserPermissions } from '@/context/app-context';
-import { supabase } from '@/lib/supabase';
+import { apiGet, apiSend } from '@/lib/api-client';
 import { DEFAULT_AVATARS } from '@/lib/data-utils';
 import { 
   Database, 
@@ -823,19 +823,11 @@ export default function Settings() {
 
   const handleSaveSecret = async (keyName: string, value: string) => {
     if (!value) return;
-    
-    try {
-      const supabaseClient = supabase;
-      if (!supabaseClient) throw new Error('Supabase não configurado');
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      if (!session) throw new Error('Não autenticado');
 
+    try {
       const response = await fetch('/api/settings/secrets', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keyName, value })
       });
 
@@ -847,8 +839,6 @@ export default function Settings() {
     } catch (err: any) {
       console.error('Erro ao salvar segredo:', err);
       setAddUserError(err.message || 'Erro ao salvar chave.');
-    } finally {
-      // Finalizado
     }
   };
 
@@ -868,23 +858,14 @@ export default function Settings() {
   };
 
   const fetchUsers = useCallback(async () => {
-    const supabaseClient = supabase;
-    if (userRole !== 'admin' || !supabaseClient) {
+    if (userRole !== 'admin') {
       setLoadingUsers(false);
       return;
     }
 
     try {
-      const { data, error } = await supabaseClient
-        .from('profiles')
-        .select('*')
-        .order('email');
-      
-      if (error) {
-        console.error('Erro detalhado ao buscar usuários (Supabase):', error);
-        throw error;
-      }
-      
+      const { data } = await apiGet<{ data: any[] }>('/api/admin/users');
+
       setUsers((data || []).map(u => ({
         uid: u.id,
         email: u.email,
@@ -902,24 +883,17 @@ export default function Settings() {
   }, [userRole]);
 
   useEffect(() => {
-    const supabaseClient = supabase;
-    if (userRole !== 'admin' || !supabaseClient) {
+    if (userRole !== 'admin') {
       setLoadingUsers(false);
       return;
     }
 
     fetchUsers();
 
-    const channel = supabaseClient
-      .channel('profiles_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        fetchUsers();
-      })
-      .subscribe();
-
-    return () => {
-      supabaseClient.removeChannel(channel);
-    };
+    // Polling in place of the previous Supabase Realtime subscription: keeps
+    // the user list in sync while the admin panel is open.
+    const interval = setInterval(fetchUsers, 30000);
+    return () => clearInterval(interval);
   }, [userRole, fetchUsers]);
 
   // Timer for live duration updates and automatic actions
@@ -969,23 +943,16 @@ export default function Settings() {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabaseClient = supabase;
-    if (!newUserEmail || !newUserPassword || !supabaseClient) return;
-    
+    if (!newUserEmail || !newUserPassword) return;
+
     setAddUserLoading(true);
     setAddUserError(null);
     try {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      if (!session) throw new Error('Não autenticado');
-
       const defaultPermissions = newUserRole === 'admin' ? DEFAULT_ADMIN_PERMISSIONS : DEFAULT_USER_PERMISSIONS;
 
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: newUserEmail.trim().toLowerCase(),
           password: newUserPassword,
@@ -1020,38 +987,20 @@ export default function Settings() {
   };
 
   const handleUpdatePermissions = async (userEmail: string) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient || !tempPermissions) return;
+    if (!tempPermissions) return;
 
     try {
-      const { error, count } = await supabaseClient
-        .from('profiles')
-        .update({ permissions: tempPermissions })
-        .eq('email', userEmail)
-        .select(); // Força o retorno para garantir que o RLS permitiu
+      await apiSend('/api/admin/users', 'PATCH', { email: userEmail, permissions: tempPermissions });
 
-      if (error) throw error;
-      
       // Força a atualização da lista local
       await fetchUsers();
-      
+
       setEditingPermissions(null);
       setResetSuccess('Permissões atualizadas com sucesso.');
       setTimeout(() => setResetSuccess(null), 3000);
     } catch (err: any) {
       console.error('Erro detalhado ao atualizar permissões:', err);
-      
-      let errorMsg = 'Erro ao atualizar permissões.';
-      
-      if (err.code === '42501') {
-        errorMsg = 'Permissão negada: Verifique se você executou o script SQL de configuração no Supabase (especialmente as políticas de RLS).';
-      } else if (err.message) {
-        errorMsg = err.message;
-      } else if (typeof err === 'object') {
-        errorMsg = JSON.stringify(err);
-      }
-      
-      setAddUserError(errorMsg);
+      setAddUserError(err.message || 'Erro ao atualizar permissões.');
     }
   };
 
@@ -1113,59 +1062,30 @@ export default function Settings() {
     ] as (keyof UserPermissions)[]
   };
 
-  const handleResetPassword = async (email: string) => {
-    const supabaseClient = supabase;
-    if (!supabaseClient) return;
-    try {
-      const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      });
-      if (error) throw error;
-      setResetSuccess(`E-mail de redefinição enviado para ${email}`);
-      setTimeout(() => setResetSuccess(null), 5000);
-    } catch (err: any) {
-      console.error('Erro ao enviar reset:', err);
-      setAddUserError(err.message || 'Erro ao enviar e-mail de redefinição.');
-    }
-  };
-
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabaseClient = supabase;
-    if (!supabaseClient || !showSetPassword || !newPassword || !user) return;
+    if (!showSetPassword || !newPassword || !user) return;
 
     setSetPasswordLoading(true);
     setAddUserError(null);
 
     try {
-      // 1. Se for o próprio usuário logado, usa o método padrão do SDK
-      if (showSetPassword.uid === user.id) {
-        const { error } = await supabaseClient.auth.updateUser({
-          password: newPassword
-        });
-        if (error) throw error;
-      } else {
-        // 2. Se for outro usuário, usa a API server-side (requer service_role key)
-        const { data: { session } } = await supabaseClient.auth.getSession();
-        if (!session) throw new Error('Sessão expirada. Faça login novamente.');
+      // 1. Se for o próprio usuário logado, usa a rota de auto-atendimento
+      // 2. Se for outro usuário, usa a rota admin de definir senha
+      const isSelf = showSetPassword.uid === user.id;
+      const response = await fetch(isSelf ? '/api/auth/change-password' : '/api/auth/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          isSelf
+            ? { newPassword }
+            : { userId: showSetPassword.uid, email: showSetPassword.email, newPassword }
+        )
+      });
 
-        const response = await fetch('/api/auth/set-password', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({
-            userId: showSetPassword.uid,
-            email: showSetPassword.email,
-            newPassword: newPassword
-          })
-        });
-
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || 'Erro ao definir senha');
-        }
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Erro ao definir senha');
       }
 
       setResetSuccess(`Senha de ${showSetPassword.email} atualizada com sucesso.`);
@@ -1174,7 +1094,7 @@ export default function Settings() {
       setTimeout(() => setResetSuccess(null), 5000);
     } catch (err: any) {
       console.error('Erro ao definir senha:', err);
-      setAddUserError(err.message || 'Erro ao definir senha. Verifique se o SUPABASE_SERVICE_ROLE_KEY está configurado.');
+      setAddUserError(err.message || 'Erro ao definir senha.');
     } finally {
       setSetPasswordLoading(false);
     }
@@ -1226,23 +1146,16 @@ export default function Settings() {
     }
   };
 
-  const isSupabaseConfigured = !!supabase && !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
   const handleDelete = async () => {
-    const supabaseClient = supabase;
-    if (!confirmDelete || !supabaseClient) return;
-    
+    if (!confirmDelete) return;
+
     if (confirmDelete.type === 'upload') {
       await deleteUpload(confirmDelete.id);
     } else if (confirmDelete.type === 'collab') {
       await deleteCollaborator(confirmDelete.id);
     } else if (confirmDelete.type === 'user') {
       try {
-        const { error } = await supabaseClient
-          .from('profiles')
-          .delete()
-          .eq('email', confirmDelete.id);
-        if (error) throw error;
+        await apiSend(`/api/admin/users?email=${encodeURIComponent(confirmDelete.id)}`, 'DELETE');
         setUsers(prev => prev.filter(u => u.email !== confirmDelete.id));
         setResetSuccess('Usuário excluído com sucesso.');
         setTimeout(() => setResetSuccess(null), 3000);
@@ -1265,33 +1178,29 @@ export default function Settings() {
             </h3>
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 h-[calc(100%-2.5rem)]">
               <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${isSupabaseConfigured ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400'}`}>
-                  {isSupabaseConfigured ? <ShieldCheck className="w-6 h-6" /> : <ShieldAlert className="w-6 h-6" />}
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-emerald-100 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400">
+                  <ShieldCheck className="w-6 h-6" />
                 </div>
                 <div>
                   <h4 className="text-lg font-black text-slate-900 dark:text-slate-100">
-                    {isSupabaseConfigured ? 'Conexão Ativa' : 'Sem Conexão'}
+                    Conexão Ativa
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {isSupabaseConfigured 
-                      ? 'Seu banco de dados Supabase está configurado e pronto para uso.' 
-                      : 'Configure as variáveis de ambiente para habilitar persistência.'}
+                    Seu banco de dados PostgreSQL está configurado e pronto para uso.
                   </p>
                 </div>
               </div>
 
-              {isSupabaseConfigured && (
-                <div className="flex gap-4 w-full md:w-auto">
-                  <div className="flex-1 md:flex-none p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Versão</p>
-                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Supabase v2</p>
-                  </div>
-                  <div className="flex-1 md:flex-none p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Região</p>
-                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Global</p>
-                  </div>
+              <div className="flex gap-4 w-full md:w-auto">
+                <div className="flex-1 md:flex-none p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Motor</p>
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">PostgreSQL</p>
                 </div>
-              )}
+                <div className="flex-1 md:flex-none p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Região</p>
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Dedicado</p>
+                </div>
+              </div>
             </div>
           </section>
         );
@@ -1610,46 +1519,7 @@ export default function Settings() {
         )}
       </AnimatePresence>
 
-      {(!isSupabaseConfigured || error?.toLowerCase().includes('supabase')) && (
-        <div className="p-6 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20 rounded-2xl space-y-4">
-          <div className="flex items-start gap-4">
-            <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <h4 className="text-amber-900 dark:text-amber-400 font-bold text-sm">Supabase não configurado</h4>
-              <p className="text-amber-700 dark:text-amber-500 text-xs mt-1">
-                Para persistir seus dados e gerenciar uploads, configure as variáveis de ambiente:
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <code className="bg-amber-100 dark:bg-amber-900/30 px-2 py-1 rounded text-[10px] font-bold dark:text-amber-300">NEXT_PUBLIC_SUPABASE_URL</code>
-                  <code className="bg-amber-100 dark:bg-amber-900/30 px-2 py-1 rounded text-[10px] font-bold dark:text-amber-300">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
-                </div>
-              </p>
-            </div>
-          </div>
-          
-          <div className="pt-4 border-t border-amber-200/50 dark:border-amber-900/30">
-            <p className="text-[10px] font-black text-amber-800 dark:text-amber-600 uppercase tracking-widest mb-2">Diagnóstico de Conexão:</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[10px]">
-              <div className="flex items-center justify-between bg-white/50 dark:bg-slate-900/50 p-2 rounded-lg">
-                <span className="text-amber-700 dark:text-amber-500">URL Detectada:</span>
-                <span className="font-mono font-bold">
-                  {process.env.NEXT_PUBLIC_SUPABASE_URL ? `${process.env.NEXT_PUBLIC_SUPABASE_URL.substring(0, 15)}...` : '❌ Ausente'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between bg-white/50 dark:bg-slate-900/50 p-2 rounded-lg">
-                <span className="text-amber-700 dark:text-amber-500">Chave Detectada:</span>
-                <span className="font-mono font-bold">
-                  {process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? '✅ Presente' : '❌ Ausente'}
-                </span>
-              </div>
-            </div>
-            <p className="text-[9px] text-amber-600 mt-3 italic">
-              * Se você acabou de configurar, tente clicar no botão &quot;Reiniciar Servidor&quot; no menu de configurações do AI Studio ou atualizar a página.
-            </p>
-          </div>
-        </div>
-      )}
-
-      <DndContext 
+      <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={handleDragEnd}

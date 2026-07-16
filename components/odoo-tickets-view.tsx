@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useApp } from '@/context/app-context';
 import { processOdooSpreadsheet } from '@/lib/data-utils';
-import { supabase } from '@/lib/supabase';
+import { apiGet, apiSend } from '@/lib/api-client';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   UploadCloud, 
@@ -94,29 +94,11 @@ export default function OdooTicketsView() {
   };
 
   const fetchTickets = useCallback(async () => {
-    const supabaseClient = supabase;
-    if (!supabaseClient) {
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      const { data, error } = await supabaseClient
-        .from('support_data')
-        .select('*')
-        .eq('source', 'odoo')
-        .order('data', { ascending: false });
+      const { data } = await apiGet<{ data: any[] }>('/api/app-data/support-data?source=odoo');
 
-      if (error) {
-        if (error.code === '42P01') {
-          // Table doesn't exist yet
-          setTickets([]);
-        } else {
-          throw error;
-        }
-      } else {
-        // Map support_data back to OdooTicket interface
-        const mappedTickets: OdooTicket[] = (data || []).map((d: any) => {
+      // Map support_data back to OdooTicket interface
+      const mappedTickets: OdooTicket[] = (data || []).map((d: any) => {
           let odooId = d.raw_data?.id || 
                        d.raw_data?.properties?.id ||
                        d.raw_data?.['Sequência de IDs de chamados'] || 
@@ -162,8 +144,7 @@ export default function OdooTicketsView() {
             imported_at: d.imported_at
           };
         });
-        setTickets(mappedTickets);
-      }
+      setTickets(mappedTickets);
     } catch (err: any) {
       console.error('Erro ao buscar tickets do Odoo:', err);
       setError('Erro ao carregar os tickets salvos.');
@@ -233,19 +214,16 @@ export default function OdooTicketsView() {
   }, [processExcel]);
 
   const handleClearData = async () => {
-    const supabaseClient = supabase;
-    if (supabaseClient && confirm('Tem certeza que deseja apagar todos os tickets do Odoo importados?')) {
+    if (confirm('Tem certeza que deseja apagar todos os tickets do Odoo importados?')) {
       setIsLoading(true);
       try {
-        await supabaseClient.from('support_data').delete().eq('source', 'odoo');
+        await apiSend('/api/app-data/support-data?source=odoo', 'DELETE');
         setTickets([]);
       } catch (err) {
         console.error(err);
       } finally {
         setIsLoading(false);
       }
-    } else if (!supabaseClient) {
-      setTickets([]);
     }
   };
 

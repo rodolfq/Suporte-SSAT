@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/app-context';
-import { supabase } from '@/lib/supabase';
 import { calculateStats, DashboardStats } from '@/lib/data-utils';
 import RankingTable from './ranking-table';
 import Image from 'next/image';
@@ -358,7 +357,7 @@ useEffect(() => {
          }));
          combinedBitrixData = [...uploadedBitrix];
 
-         // Add Bitrix tickets from context (Supabase)
+         // Add Bitrix tickets from context
          const allBitrix = contextBitrixTickets || [];
          const mappedBitrix = allBitrix.map(t => ({
            ...t,

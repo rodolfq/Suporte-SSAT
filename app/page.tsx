@@ -139,6 +139,20 @@ export default function Page() {
     return <Login />;
   }
 
+  // Permissions load asynchronously right after `user` is set (see
+  // fetchProfile in app-context.tsx). Without this gate, the view briefly
+  // renders with userPermissions still null, so hasPermission() returns
+  // false for everything and "Acesso Restrito" flashes before permissions
+  // arrive a moment later.
+  if (!userPermissions) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
+        <p className="text-slate-500 dark:text-slate-400 font-medium">Carregando permissões...</p>
+      </div>
+    );
+  }
+
   const handleUploadComplete = () => {
     setView('dashboard');
   };

@@ -61,8 +61,14 @@ export async function listFilasInRange(start: string, end: string) {
 
 export async function createFila(data: string, responsavelId: string | null) {
   const id = newId();
+  // `filas.data` is UNIQUE, and two concurrent "no queue yet for today, let's
+  // create one" callers (e.g. duplicate effect firings) can both reach this
+  // insert. ON CONFLICT turns the loser's insert into a no-op update instead
+  // of an unhandled duplicate-key error (500), returning the existing row.
   const row = await queryOne(
-    `INSERT INTO filas (id, data, responsavel_passagem_turno_id, created_at) VALUES ($1, $2, $3, now()) RETURNING *`,
+    `INSERT INTO filas (id, data, responsavel_passagem_turno_id, created_at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (data) DO UPDATE SET data = EXCLUDED.data
+     RETURNING *`,
     [id, data, responsavelId]
   );
   return row!;

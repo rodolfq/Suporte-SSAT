@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { apiGet, apiSend } from '@/lib/api-client';
 import { useApp } from '@/context/app-context';
 import { format, startOfDay, isAfter, isBefore, isToday, parseISO } from 'date-fns';
@@ -123,6 +123,17 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Debounce timers for updateInfo, keyed by `${id}-${field}`, so text
+  // inputs (e.g. observações) don't fire a PATCH on every keystroke.
+  const updateInfoTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    const timers = updateInfoTimers.current;
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, []);
 
   const fetchOperators = useCallback(async () => {
     try {
@@ -437,23 +448,32 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateInfo = async (id: string, field: 'atendimento_tipo' | 'atendimento_hora' | 'atendimento_obs', value: string) => {
-    try {
-      const op = currentQueue.find(o => o.id === id);
-      const updates: any = { [field]: value };
+    const op = currentQueue.find(o => o.id === id);
+    const updates: any = { [field]: value };
 
-      // Auto-fill time if empty and user is typing obs or changing type
-      if ((field === 'atendimento_obs' || field === 'atendimento_tipo') && (!op?.atendimento_hora)) {
-        updates.atendimento_hora = format(new Date(), 'HH:mm');
-      }
-
-      await apiSend('/api/queue/fila-operadores', 'PATCH', { id, ...updates });
-
-      setCurrentQueue(prev => prev.map(o =>
-        o.id === id ? { ...o, ...updates } : o
-      ));
-    } catch (err: any) {
-      console.error('Error updating info:', err);
+    // Auto-fill time if empty and user is typing obs or changing type
+    if ((field === 'atendimento_obs' || field === 'atendimento_tipo') && (!op?.atendimento_hora)) {
+      updates.atendimento_hora = format(new Date(), 'HH:mm');
     }
+
+    // Reflect the change locally right away so the input stays responsive.
+    setCurrentQueue(prev => prev.map(o =>
+      o.id === id ? { ...o, ...updates } : o
+    ));
+
+    // Debounce the network call per field so continuous typing (e.g. in the
+    // observações field) doesn't fire a PATCH request on every keystroke.
+    const timerKey = `${id}-${field}`;
+    clearTimeout(updateInfoTimers.current[timerKey]);
+    updateInfoTimers.current[timerKey] = setTimeout(async () => {
+      delete updateInfoTimers.current[timerKey];
+      try {
+        await apiSend('/api/queue/fila-operadores', 'PATCH', { id, ...updates });
+      } catch (err: any) {
+        console.error('Error updating info:', err);
+        setError(err.message);
+      }
+    }, 600);
   };
 
   const updateOperatorStatus = async (id: string, status: 'Ativo' | 'Ausente', ausenteAte?: string | null) => {

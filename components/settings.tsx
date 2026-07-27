@@ -748,7 +748,6 @@ export default function Settings() {
   const [tempPermissions, setTempPermissions] = useState<UserPermissions | null>(null);
 
   // Bitrix Timeman UI State
-  const [now, setNow] = useState<number>(Date.now());
   const [lastAutoAction, setLastAutoAction] = useState<Record<string, string>>({});
   const [showScheduleModal, setShowScheduleModal] = useState<any | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<any>({
@@ -896,11 +895,15 @@ export default function Settings() {
     return () => clearInterval(interval);
   }, [userRole, fetchUsers]);
 
-  // Timer for live duration updates and automatic actions
+  // Automatic Bitrix schedule actions check. This used to also call
+  // setNow(currentTime) every tick "for live duration updates", but nothing
+  // in this component actually reads that state - it only forced a full
+  // re-render of the whole (large) Settings page once a second for no
+  // visible effect. Kept as a plain interval with no state update so the
+  // schedule check still runs without the wasted re-renders.
   useEffect(() => {
     const timer = setInterval(() => {
       const currentTime = Date.now();
-      setNow(currentTime);
 
       // Automatic Actions Check
       if (bitrixSchedules.length > 0 && bitrixUsers.length > 0) {

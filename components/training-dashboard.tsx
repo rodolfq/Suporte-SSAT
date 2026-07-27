@@ -1,6 +1,6 @@
 'use client';
 
-import { obterPontosGamificacao, LancamentoPonto } from '@/lib/gameficacao-service';
+import { obterPontosGamificacao, assinarPontosGamificacao, LancamentoPonto } from '@/lib/gameficacao-service';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Users,
@@ -147,11 +147,22 @@ export default function TrainingDashboard() {
     }
   }, [loadGamificationData]);
 
+  // Keep gamification points live via a Firestore real-time listener instead
+  // of polling the whole collection every 60s: after the initial snapshot,
+  // Firestore only pushes the documents that changed, which is far cheaper
+  // than a repeated full read and updates the screen faster too.
   useEffect(() => {
-    refreshData();
-    const interval = setInterval(refreshData, 60000);
-    return () => clearInterval(interval);
-  }, [refreshData]);
+    setIsLoading(true);
+    const unsubscribe = assinarPontosGamificacao(
+      (points) => {
+        setGamificationPoints(points);
+        setLastRefresh(new Date());
+        setIsLoading(false);
+      },
+      () => setIsLoading(false)
+    );
+    return () => unsubscribe();
+  }, []);
 
   // Extract active trainers
   const trainersList = useMemo(() => {

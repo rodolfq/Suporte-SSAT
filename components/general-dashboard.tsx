@@ -170,11 +170,12 @@ interface GeneralDashboardProps {
 }
 
 export default function GeneralDashboard({ onSelectAgent }: GeneralDashboardProps) {
-   const { 
+   const {
      selectedRows,
-     rawRows, 
-     collaborators, 
-     uploads, 
+     selectedOdooRows,
+     rawRows,
+     collaborators,
+     uploads,
      filterStatus,
      dateFilter,
      dateRange,
@@ -289,13 +290,13 @@ useEffect(() => {
        setIsLoading(true);
        try {
          const { start, end } = dateRange;
-         
+
          // Use selectedRows (already filtered by date) for Chat stats
          // selectedRows already contains only chat data filtered by date
          const chatData = selectedRows || [];
-         
-         // 1. Process Odoo Stats from selectedRows (unified table) - already filtered by date
-         const uploadedOdoo = chatData.filter(row => row.source === 'odoo').map(r => ({
+
+         // 1. Process Odoo Stats from selectedOdooRows (unified table, source==='odoo') - already filtered by date
+         const uploadedOdoo = (selectedOdooRows || []).map(r => ({
            id: r.id || `odoo-${Math.random()}`,
            stage: r.stage || r.rawData?.stage || 'Novo',
            sla_deadline: r.slaDeadline || r.rawData?.sla_deadline,
@@ -399,7 +400,7 @@ useEffect(() => {
      };
 
      fetchAllStats();
-   }, [dateRange, selectedRows, dateFilter, uploads, contextOdooTickets, contextBitrixTickets]);
+   }, [dateRange, selectedRows, selectedOdooRows, dateFilter, uploads, contextOdooTickets, contextBitrixTickets]);
 
   const chartData = useMemo(() => [
     { name: 'Chats', value: chatStats?.totalAtendimentos || 0, color: '#6366f1' },

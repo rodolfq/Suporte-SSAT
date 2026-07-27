@@ -71,17 +71,14 @@ interface OdooTicket {
 }
 
 export default function OdooTicketsDashboard() {
-  const { selectedRows, dateFilter } = useApp();
+  const { selectedOdooRows, dateFilter } = useApp();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({});
   const [expandedAssignees, setExpandedAssignees] = useState<Record<string, boolean>>({});
 
   const tickets = useMemo(() => {
-    return selectedRows.filter(row => {
-      if (row.source !== 'odoo') return false;
-      return true;
-    }).map(r => {
+    return selectedOdooRows.map(r => {
       // Try to find the original Odoo ID in rawData
       let odooId = r.rawData?.id || 
                    r.rawData?.properties?.id ||
@@ -125,7 +122,7 @@ export default function OdooTicketsDashboard() {
         link: r.rawData?.link || (finalOdooId ? `https://systemsat.odoo.com/web#id=${finalOdooId}&model=helpdesk.ticket&view_type=form` : undefined)
       };
     });
-  }, [selectedRows]);
+  }, [selectedOdooRows]);
 
   const stats = useMemo(() => {
     const now = new Date();

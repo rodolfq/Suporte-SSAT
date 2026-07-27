@@ -57,6 +57,7 @@ interface AppState {
   periodDashboard: DashboardStats | null;
   totalDashboard: DashboardStats | null;
   selectedRows: SupportData[];
+  selectedOdooRows: SupportData[];
   bitrixTickets: any[];
   odooTickets: any[];
   uploads: any[];
@@ -157,6 +158,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [totalDashboard, setTotalDashboard] = useState<DashboardStats | null>(null);
   const [uploads, setUploads] = useState<UploadRecord[]>([]);
   const [selectedRows, setSelectedRows] = useState<SupportData[]>([]);
+  const [selectedOdooRows, setSelectedOdooRows] = useState<SupportData[]>([]);
   const [bitrixTickets, setBitrixTickets] = useState<any[]>([]);
   const [odooTickets, setOdooTickets] = useState<any[]>([]);
 const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
@@ -617,11 +619,11 @@ const clearColumnFilters = () => {
     }
   }, [user, refreshData]);
 
-    const { collaborators: calculatedCollaborators, dashboard: calculatedDashboard, selectedRows: calculatedSelectedRows, periodDashboard: calculatedPeriodDashboard, totalDashboard: calculatedTotalDashboard } =
+    const { collaborators: calculatedCollaborators, dashboard: calculatedDashboard, selectedRows: calculatedSelectedRows, periodDashboard: calculatedPeriodDashboard, totalDashboard: calculatedTotalDashboard, selectedOdooRows: calculatedSelectedOdooRows } =
     React.useMemo(() => {
 
       if (rawRows.length === 0)
-        return { collaborators: [], dashboard: null, selectedRows: [], periodDashboard: null, totalDashboard: null };
+        return { collaborators: [], dashboard: null, selectedRows: [], periodDashboard: null, totalDashboard: null, selectedOdooRows: [] };
 
       // Base filtering for Chat Dashboard
       let filteredData = rawRows.filter(row => row.source === 'chat' || !row.source);
@@ -629,19 +631,21 @@ const clearColumnFilters = () => {
       // Data for Total Dashboard
       let totalFilteredData = rawRows.filter(row => row.source === 'chat' || !row.source);
 
+      // Data synced/imported from Odoo (kept separate so Odoo-specific screens
+      // aren't affected by the chat-only filtering above)
+      let odooFilteredData = rawRows.filter(row => row.source === 'odoo');
+
       // Apply Date Filter
       if (dateFilter !== 'all') {
-        filteredData = filteredData.filter(row => {
+        const withinRange = (row: SupportData) => {
           const rowDate = new Date(row.data);
           // Use local components to match what the user sees in the UI
           const localDate = new Date(rowDate.getFullYear(), rowDate.getMonth(), rowDate.getDate());
           return isWithinInterval(localDate, { start: dateRange.start, end: dateRange.end });
-        });
-        totalFilteredData = totalFilteredData.filter(row => {
-          const rowDate = new Date(row.data);
-          const localDate = new Date(rowDate.getFullYear(), rowDate.getMonth(), rowDate.getDate());
-          return isWithinInterval(localDate, { start: dateRange.start, end: dateRange.end });
-        });
+        };
+        filteredData = filteredData.filter(withinRange);
+        totalFilteredData = totalFilteredData.filter(withinRange);
+        odooFilteredData = odooFilteredData.filter(withinRange);
       }
 
       // Apply global search and status filters to both datasets for consistency
@@ -664,9 +668,10 @@ const clearColumnFilters = () => {
 
       const finalFilteredData = applyGlobalFilters(filteredData);
       const finalTotalFilteredData = applyGlobalFilters(totalFilteredData);
+      const finalOdooFilteredData = applyGlobalFilters(odooFilteredData);
 
       if (finalFilteredData.length === 0 && finalTotalFilteredData.length === 0)
-        return { collaborators: [], dashboard: null, selectedRows: filteredData, periodDashboard: null, totalDashboard: null };
+        return { collaborators: [], dashboard: null, selectedRows: filteredData, periodDashboard: null, totalDashboard: null, selectedOdooRows: finalOdooFilteredData };
 
       // Dashboard for Chat Dashboard (respects dateFilter AND global filters)
       const { collaborators: collabs, dashboard: dash } = calculateStats(finalFilteredData, pointsConfig);
@@ -693,7 +698,8 @@ const clearColumnFilters = () => {
         dashboard: dash,
         periodDashboard: periodDash,
         totalDashboard: totalDash,
-        selectedRows: finalFilteredData // Use filtered data that respects search and status filters
+        selectedRows: finalFilteredData, // Use filtered data that respects search and status filters
+        selectedOdooRows: finalOdooFilteredData
       };
 
     }, [rawRows, avatarMap, searchTerm, filterStatus, dateFilter, dateRange, pointsConfig, columnFilters]);
@@ -704,7 +710,8 @@ const clearColumnFilters = () => {
     setPeriodDashboard(calculatedPeriodDashboard);
     setTotalDashboard(calculatedTotalDashboard);
     setSelectedRows(calculatedSelectedRows);
-  }, [calculatedCollaborators, calculatedDashboard, calculatedPeriodDashboard, calculatedTotalDashboard, calculatedSelectedRows]);
+    setSelectedOdooRows(calculatedSelectedOdooRows);
+  }, [calculatedCollaborators, calculatedDashboard, calculatedPeriodDashboard, calculatedTotalDashboard, calculatedSelectedRows, calculatedSelectedOdooRows]);
 
   const setOdooTicketsData = useCallback(async (tickets: any[], filename: string) => {
     setIsLoading(true);
@@ -1207,6 +1214,7 @@ const clearColumnFilters = () => {
         isLoading,
         uploads,
         selectedRows,
+        selectedOdooRows,
         searchTerm,
         setSearchTerm,
         filterStatus,

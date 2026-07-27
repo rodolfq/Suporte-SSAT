@@ -528,29 +528,38 @@ const clearColumnFilters = () => {
     setError(null);
 
     try {
-      // 1. Fetch Uploads
-      try {
-        const { data: uploadsData } = await apiGet<{ data: any[] }>('/api/app-data/uploads');
-        setUploads(uploadsData || []);
-      } catch (err) {
-        logError('Error fetching uploads:', err);
+      // These four reads are independent of each other, so fetch them
+      // concurrently instead of one-after-another - refreshData runs after
+      // nearly every mutation (upload, sync, note edit, exclusion toggle),
+      // so serializing them here meant every single action in the app paid
+      // the sum of all four round trips instead of just the slowest one.
+      const [uploadsResult, supportDataResult, settingsResult, bitrixResult] = await Promise.allSettled([
+        apiGet<{ data: any[] }>('/api/app-data/uploads'),
+        apiGet<{ data: any[] }>('/api/app-data/support-data'),
+        apiGet<{ data: any[] }>('/api/app-data/collaborator-settings'),
+        apiGet<{ data: any[] }>('/api/app-data/bitrix-tickets'),
+      ]);
+
+      // 1. Uploads
+      if (uploadsResult.status === 'fulfilled') {
+        setUploads(uploadsResult.value.data || []);
+      } else {
+        logError('Error fetching uploads:', uploadsResult.reason);
       }
 
-      // 2. Fetch Support Data
+      // 2. Support Data
       let allSupportData: any[] = [];
-      try {
-        const { data } = await apiGet<{ data: any[] }>('/api/app-data/support-data');
-        allSupportData = data || [];
-      } catch (err) {
-        logError('Error fetching support_data:', err);
+      if (supportDataResult.status === 'fulfilled') {
+        allSupportData = supportDataResult.value.data || [];
+      } else {
+        logError('Error fetching support_data:', supportDataResult.reason);
       }
 
-      // 3. Fetch Collaborator Settings
-      try {
-        const { data: settingsData } = await apiGet<{ data: any[] }>('/api/app-data/collaborator-settings');
-
+      // 3. Collaborator Settings
+      if (settingsResult.status === 'fulfilled') {
+        const settingsData = settingsResult.value.data || [];
         const newAvatarMap = new Map(
-          (settingsData || []).map((s: any) => [
+          settingsData.map((s: any) => [
             s.name,
             {
               url: s.avatar_url,
@@ -561,8 +570,8 @@ const clearColumnFilters = () => {
           ])
         );
         setAvatarMap(newAvatarMap);
-      } catch (err) {
-        logError('Error fetching collaborator_settings:', err);
+      } else {
+        logError('Error fetching collaborator_settings:', settingsResult.reason);
       }
 
       // 4. Process and set raw rows even if some fetches failed
@@ -594,12 +603,11 @@ const clearColumnFilters = () => {
       const odooData = formattedData.filter(d => d.source === 'odoo');
       setOdooTickets(odooData);
 
-      // 5. Fetch Bitrix Tickets
-      try {
-        const { data: bitrixData } = await apiGet<{ data: any[] }>('/api/app-data/bitrix-tickets');
-        setBitrixTickets(bitrixData || []);
-      } catch (err: any) {
-        logError('Error fetching bitrix_tickets:', err);
+      // 5. Bitrix Tickets
+      if (bitrixResult.status === 'fulfilled') {
+        setBitrixTickets(bitrixResult.value.data || []);
+      } else {
+        logError('Error fetching bitrix_tickets:', bitrixResult.reason);
       }
 
     } catch (err) {

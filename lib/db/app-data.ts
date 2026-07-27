@@ -41,6 +41,11 @@ export async function listSupportData(source?: string) {
   return query('SELECT * FROM support_data LIMIT 50000');
 }
 
+// Columns intentionally left untouched on conflict: they're user-driven edits
+// (excluding a row, adding a note) made from within the app, not part of the
+// synced/uploaded payload, so a re-sync must never clobber them.
+const PRESERVE_ON_CONFLICT = new Set(['id', 'is_excluded', 'exclusion_reason', 'notes']);
+
 export async function upsertSupportData(rows: Record<string, any>[]) {
   if (rows.length === 0) return;
   const cols = Object.keys(rows[0]);
@@ -50,8 +55,18 @@ export async function upsertSupportData(rows: Record<string, any>[]) {
     cols.forEach(c => values.push(toJsonbParam(c, row[c])));
     return `(${placeholders.join(', ')})`;
   });
+
+  // A plain "DO NOTHING" meant re-syncing an already-imported row (same
+  // deterministic id) silently skipped it, so stage/date/other changes from
+  // Odoo/Bitrix never reached the DB after the first import. Update the
+  // synced fields on conflict instead, while preserving user-managed columns.
+  const updatableCols = cols.filter(c => !PRESERVE_ON_CONFLICT.has(c));
+  const conflictClause = updatableCols.length > 0
+    ? `DO UPDATE SET ${updatableCols.map(c => `${c} = EXCLUDED.${c}`).join(', ')}`
+    : 'DO NOTHING';
+
   await query(
-    `INSERT INTO support_data (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT (id) DO NOTHING`,
+    `INSERT INTO support_data (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT (id) ${conflictClause}`,
     values
   );
 }

@@ -193,9 +193,10 @@ export async function listChecklistFilaOperadorIds(ids: string[]): Promise<Set<s
 }
 
 export async function insertChecklists(filaOperadorIds: string[]) {
-  for (const id of filaOperadorIds) {
-    await query(`INSERT INTO checklists (id, fila_operador_id, created_at) VALUES ($1, $2, now())`, [newId(), id]);
-  }
+  if (filaOperadorIds.length === 0) return;
+  const tuples = filaOperadorIds.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2}, now())`).join(', ');
+  const values = filaOperadorIds.flatMap(id => [newId(), id]);
+  await query(`INSERT INTO checklists (id, fila_operador_id, created_at) VALUES ${tuples}`, values);
 }
 
 const CHECKLIST_FIELDS = ['vpn', 'ch_bitrix', 'ch_odoo', 'telefone', 'almoco'];
@@ -215,9 +216,10 @@ export async function listAlmocoFilaOperadorIds(ids: string[]): Promise<Set<stri
 }
 
 export async function insertAlmocos(filaOperadorIds: string[]) {
-  for (const id of filaOperadorIds) {
-    await query(`INSERT INTO almocos (id, fila_operador_id, created_at) VALUES ($1, $2, now())`, [newId(), id]);
-  }
+  if (filaOperadorIds.length === 0) return;
+  const tuples = filaOperadorIds.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2}, now())`).join(', ');
+  const values = filaOperadorIds.flatMap(id => [newId(), id]);
+  await query(`INSERT INTO almocos (id, fila_operador_id, created_at) VALUES ${tuples}`, values);
 }
 
 export async function updateAlmocoHorario(filaOperadorId: string, horario: string) {

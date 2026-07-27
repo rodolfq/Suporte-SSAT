@@ -231,9 +231,13 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Get previous queue for rotation
+      // Get previous queue for rotation and active operators in parallel - they
+      // don't depend on each other, so there's no reason to serialize the round trips.
       const yesterday = format(startOfDay(new Date(date.getTime() - 86400000)), 'yyyy-MM-dd');
-      const { data: prevQueue } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${yesterday}`);
+      const [{ data: prevQueue }, { data: activeOps }] = await Promise.all([
+        apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${yesterday}`),
+        apiGet<{ data: Operator[] }>('/api/queue/operators?activeOnly=true')
+      ]);
 
       let baseOrder: string[] = [];
       if (prevQueue) {
@@ -242,9 +246,6 @@ export function QueueProvider({ children }: { children: ReactNode }) {
           baseOrder = prevOps.map(o => o.operador_id);
         }
       }
-
-      // Get active operators
-      const { data: activeOps } = await apiGet<{ data: Operator[] }>('/api/queue/operators?activeOnly=true');
 
       if (!activeOps) throw new Error('Nenhum operador encontrado.');
 
@@ -367,23 +368,26 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       if (upsertedOps && upsertedOps.length > 0) {
         const opIds = upsertedOps.map(op => op.id);
 
-        // Check existing checklists
-        const { data: existingChecklistIds } = await apiGet<{ data: string[] }>(`/api/queue/checklists?filaOperadorIds=${opIds.join(',')}`);
+        // Checklist and lunch existence checks are independent - run them together.
+        const [{ data: existingChecklistIds }, { data: existingLunchIds }] = await Promise.all([
+          apiGet<{ data: string[] }>(`/api/queue/checklists?filaOperadorIds=${opIds.join(',')}`),
+          apiGet<{ data: string[] }>(`/api/queue/almocos?filaOperadorIds=${opIds.join(',')}`)
+        ]);
+
         const existingChecklistSet = new Set(existingChecklistIds || []);
         const checklistIdsToInsert = opIds.filter(id => !existingChecklistSet.has(id));
 
-        if (checklistIdsToInsert.length > 0) {
-          await apiSend('/api/queue/checklists', 'POST', { filaOperadorIds: checklistIdsToInsert });
-        }
-
-        // Check existing lunches
-        const { data: existingLunchIds } = await apiGet<{ data: string[] }>(`/api/queue/almocos?filaOperadorIds=${opIds.join(',')}`);
         const existingLunchSet = new Set(existingLunchIds || []);
         const lunchIdsToInsert = opIds.filter(id => !existingLunchSet.has(id));
 
-        if (lunchIdsToInsert.length > 0) {
-          await apiSend('/api/queue/almocos', 'POST', { filaOperadorIds: lunchIdsToInsert });
-        }
+        await Promise.all([
+          checklistIdsToInsert.length > 0
+            ? apiSend('/api/queue/checklists', 'POST', { filaOperadorIds: checklistIdsToInsert })
+            : Promise.resolve(),
+          lunchIdsToInsert.length > 0
+            ? apiSend('/api/queue/almocos', 'POST', { filaOperadorIds: lunchIdsToInsert })
+            : Promise.resolve()
+        ]);
       }
 
       fetchCurrentQueue(dateStr);

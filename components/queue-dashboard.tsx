@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useQueue, QueueOperator, Operator } from '@/context/queue-context';
 import { useApp } from '@/context/app-context';
 import { 
@@ -542,8 +542,23 @@ export default function QueueDashboard() {
     fetchAvailableDates();
   }, [fetchAvailableDates]);
 
+  // Guards against a runaway retry storm: if generateDailyQueue fails (e.g. no
+  // active operators), currentQueue/currentQueueData stay empty and this effect's
+  // conditions remain true forever, re-triggering the multi-request generation
+  // flow on every render. Track the date we've already attempted so a failure
+  // surfaces once per date instead of hammering the API in a loop.
+  const autoGenerateAttemptedRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (currentQueue.length === 0 && (isToday(selectedDate) || isFutureDate) && !isLoading && !currentQueueData) {
+    const dateKey = format(selectedDate, 'yyyy-MM-dd');
+    if (
+      currentQueue.length === 0 &&
+      (isToday(selectedDate) || isFutureDate) &&
+      !isLoading &&
+      !currentQueueData &&
+      autoGenerateAttemptedRef.current !== dateKey
+    ) {
+      autoGenerateAttemptedRef.current = dateKey;
       generateDailyQueue(selectedDate);
     }
   }, [currentQueue.length, selectedDate, isLoading, currentQueueData, generateDailyQueue, isFutureDate]);

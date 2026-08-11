@@ -32,6 +32,21 @@ export async function listActiveOperators() {
   return query(`SELECT * FROM operadores WHERE ignorar_na_fila = false`);
 }
 
+export const DEFAULT_HORARIO_TRABALHO = '08:00 - 17:00';
+
+export async function createOperator(nome: string, horarioTrabalho?: string) {
+  const id = newId();
+  // `ignorar_na_fila = false` é o que faz o analista entrar automaticamente
+  // nas filas dos próximos dias (listActiveOperators alimenta a geração diária).
+  const row = await queryOne(
+    `INSERT INTO operadores (id, nome, horario_trabalho, status, ignorar_na_fila, created_at)
+     VALUES ($1, $2, $3, 'Ativo', false, now())
+     RETURNING *`,
+    [id, nome, horarioTrabalho || DEFAULT_HORARIO_TRABALHO]
+  );
+  return row!;
+}
+
 const OPERATOR_UPDATABLE_FIELDS = ['status', 'ausente_ate', 'horario_trabalho', 'posicao_fixa'];
 
 export async function updateOperator(

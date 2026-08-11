@@ -101,6 +101,7 @@ interface QueueState {
   updateOperatorPosition: (id: string, posicao: number | null) => Promise<void>;
   updateQueueHandover: (operadorId: string | null) => Promise<void>;
   addOperatorToQueue: (operadorId: string) => Promise<void>;
+  addCollaboratorToQueue: (nome: string) => Promise<void>;
   removeOperatorFromQueue: (queueOperatorId: string) => Promise<void>;
   fetchHistory: (date: string) => Promise<void>;
   updateSchedule: (tipo: 'terca' | 'quarta' | 'presencial', names: string, dateStr: string) => Promise<void>;
@@ -518,26 +519,35 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const addOperatorToQueue = async (operadorId: string) => {
-    if (!currentQueueData) return;
-    try {
-      const filaId = currentQueueData.id;
-      const nextOrder = currentQueue.length;
+    if (!currentQueueData) throw new Error('Nenhuma fila carregada para esta data.');
+    if (currentQueue.some(q => q.operador_id === operadorId)) return;
 
-      const { data: newOp } = await apiSend<{ data: { id: string } }>('/api/queue/fila-operadores', 'POST', { fila_id: filaId, operador_id: operadorId, ordem: nextOrder });
+    const filaId = currentQueueData.id;
+    const nextOrder = currentQueue.length;
 
-      await apiSend('/api/queue/checklists', 'POST', { filaOperadorIds: [newOp.id] });
-      await apiSend('/api/queue/almocos', 'POST', { filaOperadorIds: [newOp.id] });
+    const { data: newOp } = await apiSend<{ data: { id: string } }>('/api/queue/fila-operadores', 'POST', { fila_id: filaId, operador_id: operadorId, ordem: nextOrder });
 
-      fetchCurrentQueue();
-    } catch (err: any) {
-      console.error('Error adding operator to queue:', err);
-    }
+    await apiSend('/api/queue/checklists', 'POST', { filaOperadorIds: [newOp.id] });
+    await apiSend('/api/queue/almocos', 'POST', { filaOperadorIds: [newOp.id] });
+
+    // Recarrega a fila da data que está aberta, e não a de hoje.
+    await fetchCurrentQueue(currentQueueData.data);
+  };
+
+  // Inclui na fila alguém que aparece na lista de colaboradores mas ainda não
+  // tem cadastro de operador. O operador é criado com `ignorar_na_fila = false`,
+  // então a partir daí ele entra sozinho nas filas dos próximos dias, seguindo
+  // o rodízio normal.
+  const addCollaboratorToQueue = async (nome: string) => {
+    const { data: operador } = await apiSend<{ data: Operator }>('/api/queue/operators', 'POST', { nome });
+    await fetchOperators();
+    await addOperatorToQueue(operador.id);
   };
 
   const removeOperatorFromQueue = async (queueOperatorId: string) => {
     try {
       await apiSend('/api/queue/fila-operadores', 'DELETE', { ids: [queueOperatorId] });
-      fetchCurrentQueue();
+      fetchCurrentQueue(currentQueueData?.data);
     } catch (err: any) {
       console.error('Error removing operator from queue:', err);
     }
@@ -806,6 +816,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       updateOperatorPosition,
       updateQueueHandover,
       addOperatorToQueue,
+      addCollaboratorToQueue,
       removeOperatorFromQueue,
       fetchHistory,
       updateSchedule,

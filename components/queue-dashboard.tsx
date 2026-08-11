@@ -27,8 +27,12 @@ import {
   ChevronRight,
   Settings2,
   FileText,
-  Download
+  Download,
+  Search,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
+import { namesMatch, normalizeName } from '@/lib/queue-names';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import { 
@@ -335,6 +339,7 @@ export default function QueueDashboard() {
     updateOperatorPosition,
     updateQueueHandover,
     addOperatorToQueue,
+    addCollaboratorToQueue,
     removeOperatorFromQueue,
     schedules,
     updateSchedule,
@@ -347,10 +352,13 @@ export default function QueueDashboard() {
     fetchAvailableDates
   } = useQueue();
 
-  const { queueLayout, updateQueueLayout } = useApp();
+  const { queueLayout, updateQueueLayout, collaborators } = useApp();
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showAddModal, setShowAddModal] = useState(false);
+  const [addSearch, setAddSearch] = useState('');
+  const [addingKey, setAddingKey] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [reportStartDate, setReportStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -514,7 +522,11 @@ export default function QueueDashboard() {
     if (isReturning && isToday(selectedDate)) {
       const isInQueue = currentQueue.some(q => q.operador_id === showStatusModal.id);
       if (!isInQueue && currentQueueData) {
-        await addOperatorToQueue(showStatusModal.id);
+        try {
+          await addOperatorToQueue(showStatusModal.id);
+        } catch (err) {
+          console.error('Erro ao reincluir operador na fila:', err);
+        }
       }
     }
 
@@ -522,6 +534,56 @@ export default function QueueDashboard() {
     setAbsentUntil('');
     setWorkHours('');
     setPosicaoFixa(null);
+  };
+
+  // Candidatos do modal "Adicionar à Fila": operadores já cadastrados que estão
+  // fora da fila do dia + qualquer colaborador da lista lateral que ainda não
+  // tem cadastro de operador (esse é criado no momento da inclusão).
+  const addCandidates = useMemo(() => {
+    const fromOperators = operators
+      .filter(op => !currentQueue.some(q => q.operador_id === op.id))
+      .map(op => ({
+        key: op.id,
+        nome: op.nome,
+        detalhe: op.horario_trabalho || '08:00 - 17:00',
+        isNew: false,
+        operadorId: op.id as string | null
+      }));
+
+    const fromCollaborators = collaborators
+      .filter(c => !operators.some(op => namesMatch(op.nome, c.name)))
+      .filter(c => !currentQueue.some(q => q.operador?.nome && namesMatch(q.operador.nome, c.name)))
+      .map(c => ({
+        key: `colaborador:${c.name}`,
+        nome: c.name,
+        detalhe: 'Sem cadastro na fila — será criado',
+        isNew: true,
+        operadorId: null as string | null
+      }));
+
+    const term = normalizeName(addSearch);
+    return [...fromOperators, ...fromCollaborators]
+      .filter(c => !term || normalizeName(c.nome).includes(term))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [operators, collaborators, currentQueue, addSearch]);
+
+  const handleAddCandidate = async (candidate: typeof addCandidates[number]) => {
+    setAddingKey(candidate.key);
+    setAddError(null);
+    try {
+      if (candidate.operadorId) {
+        await addOperatorToQueue(candidate.operadorId);
+      } else {
+        await addCollaboratorToQueue(candidate.nome);
+      }
+      setShowAddModal(false);
+      setAddSearch('');
+    } catch (err: any) {
+      console.error('Erro ao adicionar à fila:', err);
+      setAddError(err?.message || 'Não foi possível adicionar o analista à fila.');
+    } finally {
+      setAddingKey(null);
+    }
   };
 
   const handleScheduleUpdate = async () => {
@@ -1470,28 +1532,77 @@ export default function QueueDashboard() {
               className="bg-white dark:bg-slate-900 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md overflow-hidden"
             >
               <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                <h3 className="font-bold text-slate-900 dark:text-slate-100">Adicionar à Fila</h3>
-                <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100">Adicionar à Fila</h3>
+                  <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mt-0.5">
+                    Analistas cadastrados e colaboradores
+                  </p>
+                </div>
+                <button onClick={() => { setShowAddModal(false); setAddSearch(''); setAddError(null); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <div className="p-6 space-y-2 max-h-[400px] overflow-auto">
-                {operators.filter(op => !currentQueue.some(q => q.operador_id === op.id)).map(op => (
-                  <button 
-                    key={op.id}
-                    onClick={() => {
-                      addOperatorToQueue(op.id);
-                      setShowAddModal(false);
-                    }}
-                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-800 transition-all group"
+
+              <div className="px-6 pt-5">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    autoFocus
+                    value={addSearch}
+                    onChange={(e) => setAddSearch(e.target.value)}
+                    placeholder="Buscar analista ou colaborador..."
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+              </div>
+
+              {addError && (
+                <div className="mx-6 mt-4 flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                  <p className="text-xs font-medium text-red-600 dark:text-red-400">{addError}</p>
+                </div>
+              )}
+
+              <div className="p-6 space-y-2 max-h-[400px] overflow-auto custom-scrollbar">
+                {addCandidates.length === 0 ? (
+                  <div className="py-10 text-center">
+                    <p className="text-xs font-bold text-slate-400">
+                      {addSearch ? 'Nenhum nome encontrado.' : 'Todos os analistas disponíveis já estão na fila.'}
+                    </p>
+                  </div>
+                ) : addCandidates.map(candidate => (
+                  <button
+                    key={candidate.key}
+                    disabled={addingKey !== null}
+                    onClick={() => handleAddCandidate(candidate)}
+                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-800 transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <div className="text-left">
-                      <p className="font-bold text-slate-900 dark:text-slate-100">{op.nome}</p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase">{op.horario_trabalho}</p>
+                    <div className="text-left min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold text-slate-900 dark:text-slate-100 truncate">{candidate.nome}</p>
+                        {candidate.isNew && (
+                          <span className="text-[8px] font-black bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded uppercase shrink-0">
+                            Novo
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase truncate">{candidate.detalhe}</p>
                     </div>
-                    <UserPlus className="w-5 h-5 text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {addingKey === candidate.key ? (
+                      <Loader2 className="w-5 h-5 text-primary animate-spin shrink-0" />
+                    ) : (
+                      <UserPlus className="w-5 h-5 text-primary opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    )}
                   </button>
                 ))}
+              </div>
+
+              <div className="px-6 pb-6 -mt-2">
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Ao incluir um colaborador sem cadastro, ele passa a fazer parte da fila e entra
+                  automaticamente nas filas dos próximos dias, seguindo o rodízio normal.
+                </p>
               </div>
             </motion.div>
           </div>

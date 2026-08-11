@@ -79,7 +79,6 @@ interface QueueState {
   operators: Operator[];
   currentQueue: QueueOperator[];
   currentQueueData: Queue | null;
-  historyQueues: Record<string, QueueOperator[]>;
   availableDates: string[];
   activities: Activity[];
   schedules: Schedule[];
@@ -87,10 +86,7 @@ interface QueueState {
   error: string | null;
 
   // Actions
-  fetchOperators: () => Promise<void>;
   fetchCurrentQueue: (dateStr?: string) => Promise<void>;
-  fetchActivities: (dateStr?: string) => Promise<void>;
-  fetchAvailableDates: () => Promise<void>;
   generateDailyQueue: (date?: Date) => Promise<void>;
   updateQueueOrder: (newOrder: QueueOperator[]) => Promise<void>;
   updateChecklist: (id: string, field: keyof Checklist, value: boolean) => Promise<void>;
@@ -103,7 +99,6 @@ interface QueueState {
   addOperatorToQueue: (operadorId: string) => Promise<void>;
   addCollaboratorToQueue: (nome: string) => Promise<void>;
   removeOperatorFromQueue: (queueOperatorId: string) => Promise<void>;
-  fetchHistory: (date: string) => Promise<void>;
   updateSchedule: (tipo: 'terca' | 'quarta' | 'presencial', names: string, dateStr: string) => Promise<void>;
   deleteSchedule: (id: string) => Promise<void>;
   completeActivity: (id: string) => Promise<void>;
@@ -113,13 +108,21 @@ interface QueueState {
 
 const QueueContext = createContext<QueueState | undefined>(undefined);
 
+/**
+ * Os payloads da fila são pequenos (uma dezena de linhas), então comparar o JSON
+ * sai muito mais barato do que o re-render em cascata que uma referência nova
+ * dispara em toda a tela quando o conteúdo veio idêntico do servidor.
+ */
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function QueueProvider({ children }: { children: ReactNode }) {
   const { user } = useApp();
   const [operators, setOperators] = useState<Operator[]>([]);
   const [currentQueue, setCurrentQueue] = useState<QueueOperator[]>([]);
   const [currentQueueData, setCurrentQueueData] = useState<Queue | null>(null);
   const [availableDates, setAvailableDates] = useState<string[]>([]);
-  const [historyQueues, setHistoryQueues] = useState<Record<string, QueueOperator[]>>({});
   const [activities, setActivities] = useState<Activity[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -139,40 +142,48 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   const fetchOperators = useCallback(async () => {
     try {
       const { data } = await apiGet<{ data: Operator[] }>('/api/queue/operators');
-      setOperators(data || []);
+      setOperators(prev => sameJson(prev, data || []) ? prev : (data || []));
     } catch (err) {
       console.error('Error fetching operators:', err);
     }
   }, []);
 
+  // Data já renderizada na tela. Enquanto a data pedida for a mesma que já está
+  // montada, o recarregamento acontece em segundo plano: sem esse controle, todo
+  // refetch ligava `isLoading` e o dashboard trocava a fila inteira por um
+  // spinner, o que aparecia como a tela "piscando".
+  const loadedDateRef = useRef<string | null>(null);
+
   const fetchCurrentQueue = useCallback(async (dateStr: string = format(new Date(), 'yyyy-MM-dd')) => {
-    setIsLoading(true);
+    const isFirstLoadForDate = loadedDateRef.current !== dateStr;
+    if (isFirstLoadForDate) setIsLoading(true);
+
     try {
-      // Refresh available dates list too
-      const { data: dates } = await apiGet<{ data: string[] }>('/api/queue/filas?dates=true');
-      setAvailableDates(dates || []);
+      // As três leituras iniciais não dependem umas das outras.
+      const [{ data: dates }, { data: activitiesData }, { data: queueData }] = await Promise.all([
+        apiGet<{ data: string[] }>('/api/queue/filas?dates=true'),
+        apiGet<{ data: Activity[] }>(`/api/queue/atividades?date=${dateStr}`),
+        apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${dateStr}`)
+      ]);
 
-      // Get activities for the day
-      const { data: activitiesData } = await apiGet<{ data: Activity[] }>(`/api/queue/atividades?date=${dateStr}`);
-      setActivities(activitiesData || []);
-
-      // Get the queue for the date
-      const { data: queueData } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${dateStr}`);
+      setAvailableDates(prev => sameJson(prev, dates || []) ? prev : (dates || []));
+      setActivities(prev => sameJson(prev, activitiesData || []) ? prev : (activitiesData || []));
 
       if (queueData) {
-        setCurrentQueueData(queueData);
-        // Get operators in the queue
+        setCurrentQueueData(prev => sameJson(prev, queueData) ? prev : queueData);
         const { data: queueOps } = await apiGet<{ data: QueueOperator[] }>(`/api/queue/fila-operadores?filaId=${queueData.id}`);
-        setCurrentQueue(queueOps || []);
+        setCurrentQueue(prev => sameJson(prev, queueOps || []) ? prev : (queueOps || []));
       } else {
         setCurrentQueueData(null);
         setCurrentQueue([]);
       }
+
+      loadedDateRef.current = dateStr;
     } catch (err: any) {
       console.error('Error fetching queue:', err);
       setError(err.message);
     } finally {
-      setIsLoading(false);
+      if (isFirstLoadForDate) setIsLoading(false);
     }
   }, []);
 
@@ -184,15 +195,6 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       console.error('Error fetching activities:', err);
     }
   };
-
-  const fetchAvailableDates = useCallback(async () => {
-    try {
-      const { data } = await apiGet<{ data: string[] }>('/api/queue/filas?dates=true');
-      setAvailableDates(data || []);
-    } catch (err) {
-      console.error('Error fetching available dates:', err);
-    }
-  }, []);
 
   const generateDailyQueue = useCallback(async (date: Date = new Date()) => {
     setIsLoading(true);
@@ -553,23 +555,10 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const fetchHistory = async (date: string) => {
-    try {
-      const { data: queueData } = await apiGet<{ data: Queue | null }>(`/api/queue/filas?date=${date}`);
-
-      if (queueData) {
-        const { data: queueOps } = await apiGet<{ data: QueueOperator[] }>(`/api/queue/fila-operadores?filaId=${queueData.id}`);
-        setHistoryQueues(prev => ({ ...prev, [date]: queueOps || [] }));
-      }
-    } catch (err: any) {
-      console.error('Error fetching history:', err);
-    }
-  };
-
   const fetchSchedules = useCallback(async () => {
     try {
       const { data } = await apiGet<{ data: Schedule[] }>('/api/queue/escalas');
-      setSchedules(data || []);
+      setSchedules(prev => sameJson(prev, data || []) ? prev : (data || []));
     } catch (err: any) {
       console.error('Error fetching schedules:', err);
     }
@@ -784,50 +773,50 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Queue routes require an authenticated session now (unlike the previous
     // permissive Supabase RLS), so wait for login before fetching.
+    // A fila do dia não é carregada aqui: quem manda na data exibida é o
+    // QueueDashboard, que chama fetchCurrentQueue(selectedDate) ao montar.
+    // Buscar aqui também significava duas cargas completas simultâneas.
     if (user) {
       fetchOperators();
-      fetchCurrentQueue();
       fetchSchedules();
     }
-  }, [user, fetchOperators, fetchCurrentQueue, fetchSchedules]);
+  }, [user, fetchOperators, fetchSchedules]);
 
-  return (
-    <QueueContext.Provider value={{
-      operators,
-      currentQueue,
-      currentQueueData,
-      historyQueues,
-      availableDates,
-      activities,
-      schedules,
-      isLoading,
-      error,
-      fetchOperators,
-      fetchCurrentQueue,
-      fetchActivities,
-      fetchAvailableDates,
-      generateDailyQueue,
-      updateQueueOrder,
-      updateChecklist,
-      updateLunch,
-      updateInfo,
-      updateOperatorStatus,
-      updateOperatorSchedule,
-      updateOperatorPosition,
-      updateQueueHandover,
-      addOperatorToQueue,
-      addCollaboratorToQueue,
-      removeOperatorFromQueue,
-      fetchHistory,
-      updateSchedule,
-      deleteSchedule,
-      completeActivity,
-      deleteActivity,
-      exportQueueReport
-    }}>
-      {children}
-    </QueueContext.Provider>
-  );
+  // Sem useMemo de propósito: as ações abaixo fecham sobre currentQueue /
+  // currentQueueData e são recriadas a cada render de qualquer forma, e o único
+  // consumidor deste contexto é o QueueDashboard — que já re-renderiza quando o
+  // estado da fila muda. Um memo aqui só adicionaria uma lista de dependências
+  // grande e fácil de deixar desatualizada, sem evitar nenhum render.
+  const value: QueueState = {
+    operators,
+    currentQueue,
+    currentQueueData,
+    availableDates,
+    activities,
+    schedules,
+    isLoading,
+    error,
+    fetchCurrentQueue,
+    generateDailyQueue,
+    updateQueueOrder,
+    updateChecklist,
+    updateLunch,
+    updateInfo,
+    updateOperatorStatus,
+    updateOperatorSchedule,
+    updateOperatorPosition,
+    updateQueueHandover,
+    addOperatorToQueue,
+    addCollaboratorToQueue,
+    removeOperatorFromQueue,
+    updateSchedule,
+    deleteSchedule,
+    completeActivity,
+    deleteActivity,
+    exportQueueReport
+  };
+
+  return <QueueContext.Provider value={value}>{children}</QueueContext.Provider>;
 }
 
 export function useQueue() {

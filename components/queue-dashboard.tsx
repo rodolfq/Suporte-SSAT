@@ -57,7 +57,11 @@ import { format, isToday, parseISO, isAfter, isBefore, startOfDay } from 'date-f
 import { ptBR } from 'date-fns/locale';
 
 // Sortable Block Component for Layout
-function SortableBlock({ 
+// Constante de módulo: como array literal dentro do componente, virava uma
+// referência nova a cada render e era repassada para todas as linhas da fila.
+const lunchTimes = ['11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00'];
+
+function SortableBlock({
   id, 
   children, 
   w, 
@@ -348,8 +352,7 @@ export default function QueueDashboard() {
     deleteActivity,
     activities,
     exportQueueReport,
-    availableDates,
-    fetchAvailableDates
+    availableDates
   } = useQueue();
 
   const { queueLayout, updateQueueLayout, collaborators } = useApp();
@@ -594,15 +597,11 @@ export default function QueueDashboard() {
     setScheduleDate('');
   };
 
-  const lunchTimes = ['11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00'];
-
+  // fetchCurrentQueue já traz a lista de datas disponíveis no mesmo lote, então
+  // não existe um efeito separado chamando fetchAvailableDates ao montar.
   useEffect(() => {
     fetchCurrentQueue(format(selectedDate, 'yyyy-MM-dd'));
   }, [selectedDate, fetchCurrentQueue]);
-
-  useEffect(() => {
-    fetchAvailableDates();
-  }, [fetchAvailableDates]);
 
   // Guards against a runaway retry storm: if generateDailyQueue fails (e.g. no
   // active operators), currentQueue/currentQueueData stay empty and this effect's
@@ -625,7 +624,12 @@ export default function QueueDashboard() {
     }
   }, [currentQueue.length, selectedDate, isLoading, currentQueueData, generateDailyQueue, isFutureDate]);
 
-  if (isLoading) {
+  // Só substitui a tela pelo spinner quando ainda não há nada para mostrar.
+  // Trocar de data ou recarregar mantém a fila atual visível enquanto o novo
+  // dado chega — o indicador de atividade fica no botão de atualizar do topo.
+  const isInitialLoad = isLoading && !currentQueueData && currentQueue.length === 0;
+
+  if (isInitialLoad) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <RefreshCw className="w-8 h-8 animate-spin text-primary" />

@@ -2,13 +2,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useApp, UserPermissions } from '@/context/app-context';
-import { CollaboratorStats } from '@/lib/data-utils';
+import { QueueProvider } from '@/context/queue-context';
 import dynamic from 'next/dynamic';
 
 const FileUpload = dynamic(() => import('@/components/file-upload'), { ssr: false, loading: () => <div className="h-64 flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> });
 const Dashboard = dynamic(() => import('@/components/dashboard'), { ssr: false, loading: () => <div className="h-64 flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> });
 const RankingTable = dynamic(() => import('@/components/ranking-table'), { ssr: false, loading: () => <div className="h-64 flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> });
-const Filters = dynamic(() => import('@/components/filters'), { ssr: false });
 
 const Settings = dynamic(() => import('@/components/settings'), { ssr: false });
 const RawDataView = dynamic(() => import('@/components/raw-data-view'), { ssr: false });
@@ -32,8 +31,6 @@ import {
   Users, 
   Settings as SettingsIcon, 
   Plus, 
-  Search, 
-  Bell, 
   Menu,
   X,
   Download,
@@ -57,7 +54,6 @@ export default function Page() {
   const { 
     dashboard, 
     collaborators, 
-    selectedRows, 
     resetData, 
     error, 
     clearError,
@@ -71,21 +67,11 @@ export default function Page() {
   const [view, setView] = useState<'upload' | 'dashboard' | 'ranking' | 'settings' | 'rawData' | 'comparison' | 'bitrixTickets' | 'odooTickets' | 'odooDashboard' | 'general' | 'trainingDashboard' | 'bitrixDashboard' | 'queue' | 'knowledgeBase'>('general');
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [filterCollabs, setFilterCollabs] = useState<string[]>([]);
 
   const hasPermission = useCallback((permission: keyof UserPermissions) => {
-    const isSuperAdmin = user?.email?.toLowerCase() === 'admin@systemsat.com.br';
-    const hasPerm = userPermissions?.[permission] === true;
-    
-    // Log apenas para depuração do usuário específico
-    if (user?.email?.toLowerCase() === 'usr@systemsat.com.br') {
-      console.log(`Verificando permissão [${permission}] para usr@systemsat.com.br:`, hasPerm);
-    }
-    
-    if (isSuperAdmin) return true;
-    return hasPerm;
+    if (user?.email?.toLowerCase() === 'admin@systemsat.com.br') return true;
+    return userPermissions?.[permission] === true;
   }, [user, userPermissions]);
 
   // Redirect to general if user doesn't have permission for current view
@@ -160,8 +146,6 @@ export default function Page() {
   const filteredCollaborators = filterCollabs.length > 0 
     ? collaborators.filter(c => filterCollabs.includes(c.name))
     : collaborators;
-
-  const availableCollabNames = collaborators.map(c => c.name);
 
   const exportFullReport = () => {
     if (collaborators.length === 0) return;
@@ -452,9 +436,6 @@ export default function Page() {
           )}
         </AnimatePresence>
 
-        {/* Debug Panel (Visível para todos temporariamente para resolver o problema) */}
-     
-
         {/* Header */}
         <header className="h-16 flex items-center justify-between px-8 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-40">
           <div className="flex items-center gap-4">
@@ -480,23 +461,10 @@ export default function Page() {
             </h2>
           </div>
 
-          <div className="flex items-center gap-6">
-            <div className="relative hidden md:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-              <input 
-                className="pl-10 pr-4 py-2 w-64 bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary/30 transition-all" 
-                placeholder="Buscar métricas..." 
-                type="text" 
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <ThemeToggle />
-              <button className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400">
-                <Bell className="w-5 h-5" />
-              </button>
-              <div className="h-9 w-9 rounded-full bg-primary/10 border-2 border-primary/20 flex items-center justify-center text-primary font-bold text-xs">
-                {user?.email?.substring(0, 2).toUpperCase() || 'US'}
-              </div>
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+            <div className="h-9 w-9 rounded-full bg-primary/10 border-2 border-primary/20 flex items-center justify-center text-primary font-bold text-xs">
+              {user?.email?.substring(0, 2).toUpperCase() || 'US'}
             </div>
           </div>
         </header>
@@ -625,7 +593,9 @@ export default function Page() {
             )}
 
             {view === 'queue' && hasPermission('view_queue') && (
-              <QueueDashboard />
+              <QueueProvider>
+                <QueueDashboard />
+              </QueueProvider>
             )}
 
             {view === 'settings' && (userRole === 'admin' || user?.email?.toLowerCase() === 'admin@systemsat.com.br') && (
@@ -636,36 +606,6 @@ export default function Page() {
           {/* Background Pattern */}
           <div className="fixed inset-0 pointer-events-none -z-10 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#3713ec 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
         </main>
-
-        {/* Filters Panel Overlay */}
-        <AnimatePresence>
-          {showFilters && (
-            <div className="absolute inset-0 z-50 flex justify-end">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setShowFilters(false)}
-                className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm" 
-              />
-              <motion.div
-                initial={{ x: '100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '100%' }}
-                className="relative"
-              >
-                <Filters 
-                  onApply={(f) => {
-                    setFilterCollabs(f.collaborators);
-                    setShowFilters(false);
-                  }} 
-                  availableCollaborators={availableCollabNames}
-                />
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
 
       </div>
     </div>

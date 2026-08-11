@@ -2,9 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { AppProvider } from '@/context/app-context';
-import { QueueProvider } from '@/context/queue-context';
 import { ThemeProvider } from '@/components/theme-provider';
-import { ScrollbarProvider } from '@/components/scrollbar-provider';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
@@ -23,13 +21,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           enableSystem
           disableTransitionOnChange
         >
-          <AppProvider>
-            <QueueProvider>
-              <ScrollbarProvider>
-                {children}
-              </ScrollbarProvider>
-            </QueueProvider>
-          </AppProvider>
+          {/* O QueueProvider fica na tela da fila (app/page.tsx), não aqui:
+              montado no layout, ele buscava operadores e escalas em todo login,
+              mesmo para quem nunca abre a fila de chamados. */}
+          <AppProvider>{children}</AppProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -2,13 +2,11 @@
 
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
 import { SupportData, CollaboratorStats, DashboardStats, calculateStats, RawSpreadsheetRow, RankingPointsConfig, isRowExcluded } from '@/lib/data-utils';
-import { apiGet, apiSend } from '@/lib/api-client';
+import { apiGet, apiSend, invalidateApiCache } from '@/lib/api-client';
 import {
   startOfDay,
   endOfDay,
   subDays,
-  startOfWeek,
-  endOfWeek,
   startOfMonth,
   endOfMonth,
   startOfYear,
@@ -51,10 +49,8 @@ export interface UserPermissions {
 
 interface AppState {
   rawRows: SupportData[];
-  rawSpreadsheetData: RawSpreadsheetRow[];
   collaborators: CollaboratorStats[];
   dashboard: DashboardStats | null;
-  periodDashboard: DashboardStats | null;
   totalDashboard: DashboardStats | null;
   selectedRows: SupportData[];
   selectedOdooRows: SupportData[];
@@ -125,6 +121,19 @@ interface AppState {
 
 const AppContext = createContext<AppState | undefined>(undefined);
 
+/**
+ * Só troca o estado quando o conteúdo realmente mudou.
+ *
+ * O heartbeat de sessão roda a cada 5 minutos e reescrevia `user`, `permissions`
+ * e os layouts com objetos novos mesmo sem nenhuma alteração. Vários efeitos
+ * dependem dessas referências (o `refreshData` deste contexto e o carregamento
+ * da fila em queue-context), então a aplicação inteira se recarregava sozinha em
+ * ciclos de 5 minutos — era isso que fazia a tela "piscar".
+ */
+function setIfChanged<T>(setter: React.Dispatch<React.SetStateAction<T>>, next: T) {
+  setter(prev => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+}
+
 const basePermissions: UserPermissions = {
   view_general: false,
   view_tickets_dash: false,
@@ -148,17 +157,51 @@ const basePermissions: UserPermissions = {
   edit_collaborators: false
 };
 
+function getDateRange(filter: string, custom: { start: string; end: string }) {
+  const now = new Date();
+
+  const parseLocalDate = (dateStr: string) => {
+    if (!dateStr) return null;
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
+  switch (filter) {
+    case 'all':
+      return { start: new Date(0), end: new Date(8640000000000000) };
+    case 'today':
+      return { start: startOfDay(now), end: endOfDay(now) };
+    case 'yesterday':
+      const yesterday = subDays(now, 1);
+      return { start: startOfDay(yesterday), end: endOfDay(yesterday) };
+    case 'week':
+      return { start: subDays(startOfDay(now), 7), end: endOfDay(now) };
+    case 'month':
+      return { start: startOfMonth(now), end: endOfMonth(now) };
+    case 'last_month':
+      const lastMonth = subDays(startOfMonth(now), 1);
+      return { start: startOfMonth(lastMonth), end: endOfMonth(lastMonth) };
+    case 'year':
+      return { start: startOfYear(now), end: endOfYear(now) };
+    case 'custom':
+      const customStart = parseLocalDate(custom.start);
+      const customEnd = parseLocalDate(custom.end);
+      return {
+        start: customStart ? startOfDay(customStart) : startOfMonth(now),
+        end: customEnd ? endOfDay(customEnd) : endOfMonth(now)
+      };
+    default:
+      return { start: new Date(0), end: new Date(8640000000000000) };
+  }
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
 
+  // `collaborators`, `dashboard`, `totalDashboard`, `selectedRows` e
+  // `selectedOdooRows` não são estado: são derivados de `rawRows` no memo mais
+  // abaixo. Mantê-los em useState só duplicava cada atualização.
   const [rawRows, setRawRows] = useState<SupportData[]>([]);
-  const [rawSpreadsheetData, setRawSpreadsheetData] = useState<RawSpreadsheetRow[]>([]);
-  const [collaborators, setCollaborators] = useState<CollaboratorStats[]>([]);
-  const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
-  const [periodDashboard, setPeriodDashboard] = useState<DashboardStats | null>(null);
-  const [totalDashboard, setTotalDashboard] = useState<DashboardStats | null>(null);
   const [uploads, setUploads] = useState<UploadRecord[]>([]);
-  const [selectedRows, setSelectedRows] = useState<SupportData[]>([]);
-  const [selectedOdooRows, setSelectedOdooRows] = useState<SupportData[]>([]);
   const [bitrixTickets, setBitrixTickets] = useState<any[]>([]);
   const [odooTickets, setOdooTickets] = useState<any[]>([]);
 const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
@@ -188,56 +231,18 @@ const [pointsConfig, setPointsConfig] = useState<RankingPointsConfig>(() => {
     };
   });
 
-  const updatePointsConfig = (newConfig: RankingPointsConfig) => {
+  const updatePointsConfig = useCallback((newConfig: RankingPointsConfig) => {
     setPointsConfig(newConfig);
     if (typeof window !== 'undefined') {
       localStorage.setItem('ranking_points_config', JSON.stringify(newConfig));
     }
-  };
+  }, []);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'included' | 'excluded'>('included');
   const [dateFilter, setDateFilter] = useState<string>('all');
   const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [importLogs, setImportLogs] = useState<any[]>([]);
   const [importIndicators, setImportIndicators] = useState<{ totalImported: number; totalIgnored: number; totalProcessed: number; totalDuplicates: number } | null>(null);
-
-  const getDateRange = (filter: string, custom: { start: string; end: string }) => {
-    const now = new Date();
-
-    const parseLocalDate = (dateStr: string) => {
-      if (!dateStr) return null;
-      const [year, month, day] = dateStr.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    };
-
-    switch (filter) {
-      case 'all':
-        return { start: new Date(0), end: new Date(8640000000000000) };
-      case 'today':
-        return { start: startOfDay(now), end: endOfDay(now) };
-      case 'yesterday':
-        const yesterday = subDays(now, 1);
-        return { start: startOfDay(yesterday), end: endOfDay(yesterday) };
-      case 'week':
-        return { start: subDays(startOfDay(now), 7), end: endOfDay(now) };
-      case 'month':
-        return { start: startOfMonth(now), end: endOfMonth(now) };
-      case 'last_month':
-        const lastMonth = subDays(startOfMonth(now), 1);
-        return { start: startOfMonth(lastMonth), end: endOfMonth(lastMonth) };
-      case 'year':
-        return { start: startOfYear(now), end: endOfYear(now) };
-      case 'custom':
-        const customStart = parseLocalDate(custom.start);
-        const customEnd = parseLocalDate(custom.end);
-        return {
-          start: customStart ? startOfDay(customStart) : startOfMonth(now),
-          end: customEnd ? endOfDay(customEnd) : endOfMonth(now)
-        };
-      default:
-        return { start: new Date(0), end: new Date(8640000000000000) };
-    }
-  };
 
   const dateRange = useMemo(() => getDateRange(dateFilter, customRange), [dateFilter, customRange]);
   const [isLoading, setIsLoading] = useState(true);
@@ -251,18 +256,18 @@ const [columnFilters, setColumnFilters] = useState({
   messagesMin: null as number | null
 });
 
-const setColumnFilter = (key: string, value: any) => {
+const setColumnFilter = useCallback((key: string, value: any) => {
   setColumnFilters(prev => ({ ...prev, [key]: value }));
-};
+}, []);
 
-const clearColumnFilters = () => {
+const clearColumnFilters = useCallback(() => {
   setColumnFilters({
     collaborators: [],
     clients: [],
     rating: null,
     messagesMin: null
   });
-};
+}, []);
 
 
 
@@ -277,6 +282,7 @@ const clearColumnFilters = () => {
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
   const userRef = React.useRef(user);
   const checkSessionRef = React.useRef<(() => Promise<void>) | undefined>(undefined);
+  const sessionUserIdRef = React.useRef<string | null>(null);
 
   // Bitrix Timeman State
   const [bitrixUsers, setBitrixUsers] = useState<any[]>([]);
@@ -394,7 +400,7 @@ const clearColumnFilters = () => {
   const fetchDashboardLayouts = useCallback(async () => {
     try {
       const { data } = await apiGet<{ data: any[] }>('/api/app-data/dashboard-layouts');
-      setDashboardLayouts(data || []);
+      setIfChanged<any[]>(setDashboardLayouts, data || []);
 
       // If no layout is selected, use the default one or the first one
       const defaultLayout = data?.find(l => l.is_default) || data?.[0];
@@ -420,9 +426,8 @@ const clearColumnFilters = () => {
         await fetchDashboardLayouts();
         // Se for o admin principal, sempre dar todas as permissões
         if (email?.toLowerCase() === 'admin@systemsat.com.br') {
-          console.log('Super Admin detectado:', email);
           setUserRole('admin');
-          setUserPermissions({
+          setIfChanged<UserPermissions | null>(setUserPermissions, {
             view_general: true,
             view_tickets_dash: true,
             view_odoo_dash: true,
@@ -450,38 +455,33 @@ const clearColumnFilters = () => {
         const { profile } = await apiGet<{ profile: any | null }>('/api/profile/me');
 
         if (!profile) {
-          console.log('Perfil não encontrado no banco para:', email || userId, '- Usando permissões restritas.');
           setUserRole('user');
-          setUserPermissions({
+          setIfChanged<UserPermissions | null>(setUserPermissions, {
             ...basePermissions,
             view_general: true // Apenas tela geral por padrão para novos usuários
           });
           setDashboardLayout(null);
           setQueueLayout(null);
         } else {
-          console.log('Perfil carregado com sucesso para:', email, 'Role:', profile.role);
           setUserRole(profile.role || 'user');
-          setDashboardLayout(profile.dashboard_layout || null);
-          setQueueLayout(profile.queue_layout || null);
-          setSettingsLayout(profile.settings_layout || null);
+          setIfChanged<any[] | null>(setDashboardLayout, profile.dashboard_layout || null);
+          setIfChanged<any[] | null>(setQueueLayout, profile.queue_layout || null);
+          setIfChanged<any[] | null>(setSettingsLayout, profile.settings_layout || null);
 
           // Garantir que permissões sejam um objeto válido
           const dbPermissions = typeof profile.permissions === 'object' && profile.permissions !== null
             ? profile.permissions
             : {};
 
-          const mergedPermissions = {
+          setIfChanged<UserPermissions | null>(setUserPermissions, {
             ...basePermissions,
             ...dbPermissions
-          };
-
-          console.log('Permissões finais aplicadas:', mergedPermissions);
-          setUserPermissions(mergedPermissions);
+          });
         }
       } catch (err: any) {
         console.error('Erro ao buscar perfil:', err);
         setUserRole('user');
-        setUserPermissions(basePermissions);
+        setIfChanged<UserPermissions | null>(setUserPermissions, basePermissions);
       }
     };
 
@@ -489,13 +489,24 @@ const clearColumnFilters = () => {
       try {
         const res = await fetch('/api/auth/session');
         if (!res.ok) {
+          // Sessão encerrada: nada do usuário anterior pode sobreviver no cache.
+          invalidateApiCache();
+          sessionUserIdRef.current = null;
           setUser(null);
           setUserRole(null);
           setUserPermissions(null);
           return;
         }
         const { user: sessionUser } = await res.json();
-        setUser(sessionUser);
+
+        // Troca de usuário na mesma aba também precisa descartar o cache.
+        const novoId = sessionUser?.id ?? null;
+        if (sessionUserIdRef.current !== novoId) {
+          invalidateApiCache();
+          sessionUserIdRef.current = novoId;
+        }
+
+        setIfChanged<any | null>(setUser, sessionUser);
         if (sessionUser) {
           await fetchProfile(sessionUser.id, sessionUser.email);
         }
@@ -627,99 +638,101 @@ const clearColumnFilters = () => {
     }
   }, [user, refreshData]);
 
-    const { collaborators: calculatedCollaborators, dashboard: calculatedDashboard, selectedRows: calculatedSelectedRows, periodDashboard: calculatedPeriodDashboard, totalDashboard: calculatedTotalDashboard, selectedOdooRows: calculatedSelectedOdooRows } =
-    React.useMemo(() => {
+  /**
+   * Pipeline de derivação dos dados exibidos.
+   *
+   * Antes este bloco calculava o resultado num useMemo e em seguida copiava tudo
+   * para seis estados via useEffect. Isso dobrava cada atualização (memo → efeito
+   * → seis setState → novo render do provider → re-render de todos os consumidores)
+   * sem nenhum ganho: os valores já eram derivados de `rawRows`. Agora são
+   * consumidos direto do memo.
+   *
+   * Também havia três chamadas de calculateStats — a função mais cara do sistema —
+   * sobre entradas comprovadamente idênticas (`filteredData` e `totalFilteredData`
+   * eram construídas com o mesmo filtro). Ficou uma só.
+   */
+  const { collaborators, dashboard, totalDashboard, selectedRows, selectedOdooRows } = useMemo(() => {
+    const vazio = {
+      collaborators: [] as CollaboratorStats[],
+      dashboard: null as DashboardStats | null,
+      totalDashboard: null as DashboardStats | null,
+      selectedRows: [] as SupportData[],
+      selectedOdooRows: [] as SupportData[]
+    };
 
-      if (rawRows.length === 0)
-        return { collaborators: [], dashboard: null, selectedRows: [], periodDashboard: null, totalDashboard: null, selectedOdooRows: [] };
+    if (rawRows.length === 0) return vazio;
 
-      // Base filtering for Chat Dashboard
-      let filteredData = rawRows.filter(row => row.source === 'chat' || !row.source);
+    const withinRange = (row: SupportData) => {
+      const rowDate = new Date(row.data);
+      // Use local components to match what the user sees in the UI
+      const localDate = new Date(rowDate.getFullYear(), rowDate.getMonth(), rowDate.getDate());
+      return isWithinInterval(localDate, { start: dateRange.start, end: dateRange.end });
+    };
 
-      // Data for Total Dashboard
-      let totalFilteredData = rawRows.filter(row => row.source === 'chat' || !row.source);
+    // Normalizado uma única vez: antes o toLowerCase() do termo era refeito para
+    // cada campo de cada linha, ou seja, centenas de milhares de vezes por tecla.
+    const termo = searchTerm.trim().toLowerCase();
+    const camposIgnorados = new Set(['data', 'uploadId', 'isExcluded', 'exclusionReason', 'rawData']);
 
-      // Data synced/imported from Odoo (kept separate so Odoo-specific screens
-      // aren't affected by the chat-only filtering above)
-      let odooFilteredData = rawRows.filter(row => row.source === 'odoo');
-
-      // Apply Date Filter
-      if (dateFilter !== 'all') {
-        const withinRange = (row: SupportData) => {
-          const rowDate = new Date(row.data);
-          // Use local components to match what the user sees in the UI
-          const localDate = new Date(rowDate.getFullYear(), rowDate.getMonth(), rowDate.getDate());
-          return isWithinInterval(localDate, { start: dateRange.start, end: dateRange.end });
-        };
-        filteredData = filteredData.filter(withinRange);
-        totalFilteredData = totalFilteredData.filter(withinRange);
-        odooFilteredData = odooFilteredData.filter(withinRange);
+    const matchesSearch = (row: SupportData) => {
+      if (termo === '') return true;
+      for (const [key, val] of Object.entries(row)) {
+        if (key === 'rawData') {
+          if (val && Object.values(val).some(v => String(v).toLowerCase().includes(termo))) return true;
+          continue;
+        }
+        if (camposIgnorados.has(key)) continue;
+        if (String(val).toLowerCase().includes(termo)) return true;
       }
+      return false;
+    };
 
-      // Apply global search and status filters to both datasets for consistency
-      const applyGlobalFilters = (data: SupportData[]) => {
-        return data.filter(row => {
-          const matchesSearch = searchTerm === '' ||
-            Object.entries(row).some(([key, val]) => {
-              if (key === 'rawData' && val) {
-                return Object.values(val).some(v => String(v).toLowerCase().includes(searchTerm.toLowerCase()));
-              }
-              return !['data', 'uploadId', 'isExcluded', 'exclusionReason', 'rawData'].includes(key) &&
-                     String(val).toLowerCase().includes(searchTerm.toLowerCase());
-            });
+    const passaNosFiltros = (row: SupportData) => {
+      if (dateFilter !== 'all' && !withinRange(row)) return false;
+      if (filterStatus === 'included' && row.isExcluded) return false;
+      if (filterStatus === 'excluded' && !row.isExcluded) return false;
+      return matchesSearch(row);
+    };
 
-          if (filterStatus === 'included') return !row.isExcluded && matchesSearch;
-          if (filterStatus === 'excluded') return row.isExcluded && matchesSearch;
-          return matchesSearch;
-        });
-      };
+    // Uma única passada sobre rawRows separando chat e Odoo, no lugar de três
+    // varreduras completas seguidas de três filtragens.
+    const chatRows: SupportData[] = [];
+    const odooRows: SupportData[] = [];
+    for (const row of rawRows) {
+      if (row.source === 'odoo') {
+        if (passaNosFiltros(row)) odooRows.push(row);
+      } else if (row.source === 'chat' || !row.source) {
+        if (passaNosFiltros(row)) chatRows.push(row);
+      }
+    }
 
-      const finalFilteredData = applyGlobalFilters(filteredData);
-      const finalTotalFilteredData = applyGlobalFilters(totalFilteredData);
-      const finalOdooFilteredData = applyGlobalFilters(odooFilteredData);
+    if (chatRows.length === 0) {
+      return { ...vazio, selectedOdooRows: odooRows };
+    }
 
-      if (finalFilteredData.length === 0 && finalTotalFilteredData.length === 0)
-        return { collaborators: [], dashboard: null, selectedRows: filteredData, periodDashboard: null, totalDashboard: null, selectedOdooRows: finalOdooFilteredData };
+    const { collaborators: collabs, dashboard: dash } = calculateStats(chatRows, pointsConfig);
 
-      // Dashboard for Chat Dashboard (respects dateFilter AND global filters)
-      const { collaborators: collabs, dashboard: dash } = calculateStats(finalFilteredData, pointsConfig);
-
-      // Calculate period-aware dashboard for General Dashboard
-      const { dashboard: periodDash } = calculateStats(finalFilteredData, pointsConfig);
-
-      // Calculate total dashboard for General Dashboard (respects dateFilter AND global filters)
-      const { dashboard: totalDash } = calculateStats(finalTotalFilteredData, pointsConfig);
-
-      const collabsWithAvatars = collabs.map(c => {
-        const settings = avatarMap.get(c.name);
-        return {
-          ...c,
-          avatarUrl: settings?.url,
-          avatarOptions: settings?.options,
-          badges: settings?.badges || [],
-          goals: settings?.goals || []
-        };
-      });
-
+    const collabsWithAvatars = collabs.map(c => {
+      const settings = avatarMap.get(c.name);
       return {
-        collaborators: collabsWithAvatars,
-        dashboard: dash,
-        periodDashboard: periodDash,
-        totalDashboard: totalDash,
-        selectedRows: finalFilteredData, // Use filtered data that respects search and status filters
-        selectedOdooRows: finalOdooFilteredData
+        ...c,
+        avatarUrl: settings?.url,
+        avatarOptions: settings?.options,
+        badges: settings?.badges || [],
+        goals: settings?.goals || []
       };
+    });
 
-    }, [rawRows, avatarMap, searchTerm, filterStatus, dateFilter, dateRange, pointsConfig, columnFilters]);
-
-  useEffect(() => {
-    setCollaborators(calculatedCollaborators);
-    setDashboard(calculatedDashboard);
-    setPeriodDashboard(calculatedPeriodDashboard);
-    setTotalDashboard(calculatedTotalDashboard);
-    setSelectedRows(calculatedSelectedRows);
-    setSelectedOdooRows(calculatedSelectedOdooRows);
-  }, [calculatedCollaborators, calculatedDashboard, calculatedPeriodDashboard, calculatedTotalDashboard, calculatedSelectedRows, calculatedSelectedOdooRows]);
+    return {
+      collaborators: collabsWithAvatars,
+      dashboard: dash,
+      // Mesma entrada, mesmo resultado: o dashboard "total" sempre respeitou os
+      // mesmos filtros do dashboard de chat, então reaproveita o cálculo.
+      totalDashboard: dash,
+      selectedRows: chatRows,
+      selectedOdooRows: odooRows
+    };
+  }, [rawRows, avatarMap, searchTerm, filterStatus, dateFilter, dateRange, pointsConfig]);
 
   const setOdooTicketsData = useCallback(async (tickets: any[], filename: string) => {
     setIsLoading(true);
@@ -808,7 +821,6 @@ const clearColumnFilters = () => {
 
     setIsLoading(true);
     setError(null);
-    setRawSpreadsheetData(rawData);
     if (indicators) setImportIndicators(indicators);
     if (logs) setImportLogs(logs);
 
@@ -915,16 +927,13 @@ const clearColumnFilters = () => {
         ...prev
       ]);
 
+      // Fallback local: com as linhas em memória, colaboradores e dashboard são
+      // recalculados sozinhos pelo memo de derivação.
       setRawRows(allRows);
-
-      const { collaborators, dashboard } = calculateStats(processedData, pointsConfig);
-
-      setCollaborators(collaborators);
-      setDashboard(dashboard);
     }
 
     setIsLoading(false);
-  }, [refreshData, pointsConfig]);
+  }, [refreshData]);
 
   const syncOdooTickets = useCallback(async (apiKey?: string) => {
     setIsLoading(true);
@@ -972,7 +981,7 @@ const clearColumnFilters = () => {
     }
   }, [refreshData]);
 
-  const deleteUpload = async (id: string) => {
+  const deleteUpload = useCallback(async (id: string) => {
     setIsLoading(true);
     try {
       await apiSend(`/api/app-data/support-data?uploadId=${id}`, 'DELETE');
@@ -984,9 +993,9 @@ const clearColumnFilters = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [refreshData]);
 
-  const deleteCollaborator = async (name: string) => {
+  const deleteCollaborator = useCallback(async (name: string) => {
     setIsLoading(true);
     try {
       await apiSend(`/api/app-data/support-data?colaborador=${encodeURIComponent(name)}`, 'DELETE');
@@ -998,43 +1007,54 @@ const clearColumnFilters = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [refreshData]);
 
-  const updateCollaboratorAvatar = async (name: string, avatarUrl: string, options?: any) => {
+  /**
+   * Atualização otimista das configurações de um colaborador.
+   *
+   * Escreve em `avatarMap`, que é a fonte que o memo de derivação consulta para
+   * montar a lista de colaboradores. Antes essas funções mexiam direto na lista
+   * derivada, o que só funcionava porque a lista ainda era um estado espelhado —
+   * a próxima recalculada descartaria a alteração.
+   */
+  const patchCollaboratorSettings = useCallback((name: string, patch: Partial<{ url: string; options: any; badges: string[]; goals: any[] }>) => {
+    setAvatarMap(prev => {
+      const next = new Map(prev);
+      const atual = next.get(name) || { url: '', options: undefined, badges: [], goals: [] };
+      next.set(name, { ...atual, ...patch });
+      return next;
+    });
+  }, []);
+
+  const updateCollaboratorAvatar = useCallback(async (name: string, avatarUrl: string, options?: any) => {
     try {
       await apiSend('/api/app-data/collaborator-settings', 'PUT', { name, avatar_url: avatarUrl, avatar_options: options });
-      setCollaborators(prev =>
-        prev.map(c => (c.name === name ? { ...c, avatarUrl, avatarOptions: options } : c))
-      );
+      patchCollaboratorSettings(name, { url: avatarUrl, options });
     } catch (err: any) {
       logError('Error updating avatar:', err);
       setError(`Erro ao atualizar avatar: ${err?.message}`);
     }
-  };
+  }, [patchCollaboratorSettings]);
 
-  const updateCollaboratorBadges = async (name: string, badges: string[]) => {
+  const updateCollaboratorBadges = useCallback(async (name: string, badges: string[]) => {
     try {
       await apiSend('/api/app-data/collaborator-settings', 'PUT', { name, badges });
-      setCollaborators(prev =>
-        prev.map(c => (c.name === name ? { ...c, badges } : c))
-      );
+      patchCollaboratorSettings(name, { badges });
     } catch (err: any) {
       logError('Error updating badges:', err);
     }
-  };
+  }, [patchCollaboratorSettings]);
 
-  const updateCollaboratorGoals = async (name: string, goals: any[]) => {
+  const updateCollaboratorGoals = useCallback(async (name: string, goals: any[]) => {
     try {
       await apiSend('/api/app-data/collaborator-settings', 'PUT', { name, goals });
-      setCollaborators(prev =>
-        prev.map(c => (c.name === name ? { ...c, goals } : c))
-      );
+      patchCollaboratorSettings(name, { goals });
     } catch (err: any) {
       logError('Error updating goals:', err);
     }
-  };
+  }, [patchCollaboratorSettings]);
 
-  const updateDashboardLayout = async (layout: any[]) => {
+  const updateDashboardLayout = useCallback(async (layout: any[]) => {
     if (!user) {
       setDashboardLayout(layout);
       return;
@@ -1060,9 +1080,9 @@ const clearColumnFilters = () => {
       // Don't show error to user for background updates to avoid noise,
       // but log it for debugging
     }
-  };
+  }, [user, selectedLayoutId]);
 
-  const updateQueueLayout = async (layout: any[]) => {
+  const updateQueueLayout = useCallback(async (layout: any[]) => {
     if (!user) return;
 
     try {
@@ -1071,9 +1091,9 @@ const clearColumnFilters = () => {
     } catch (err: any) {
       console.error('Error updating queue layout:', err);
     }
-  };
+  }, [user]);
 
-  const updateSettingsLayout = async (layout: any[]) => {
+  const updateSettingsLayout = useCallback(async (layout: any[]) => {
     if (!user) {
       setSettingsLayout(layout);
       return;
@@ -1085,9 +1105,9 @@ const clearColumnFilters = () => {
     } catch (err: any) {
       console.error('Error updating settings layout:', err);
     }
-  };
+  }, [user]);
 
-  const saveDashboardLayout = async (name: string, layout: any[], isDefault: boolean = false) => {
+  const saveDashboardLayout = useCallback(async (name: string, layout: any[], isDefault: boolean = false) => {
     if (!user) {
       console.warn('Save attempted without user');
       return;
@@ -1111,9 +1131,9 @@ const clearColumnFilters = () => {
       console.error('Error saving dashboard layout:', err);
       setError(`Erro ao salvar layout: ${err.message || 'Erro desconhecido'}`);
     }
-  };
+  }, [user, fetchDashboardLayouts]);
 
-  const deleteDashboardLayout = async (id: string) => {
+  const deleteDashboardLayout = useCallback(async (id: string) => {
     if (!user) return;
 
     try {
@@ -1128,9 +1148,9 @@ const clearColumnFilters = () => {
       console.error('Error deleting dashboard layout:', err);
       setError(`Erro ao excluir layout: ${err.message}`);
     }
-  };
+  }, [user, selectedLayoutId, fetchDashboardLayouts]);
 
-  const selectDashboardLayout = async (id: string) => {
+  const selectDashboardLayout = useCallback(async (id: string) => {
     if (!id) {
       setSelectedLayoutId(null);
       return;
@@ -1146,9 +1166,9 @@ const clearColumnFilters = () => {
         await apiSend('/api/profile/me', 'PATCH', { dashboard_layout: layout.layout });
       }
     }
-  };
+  }, [user, dashboardLayouts]);
 
-  const toggleRowExclusion = async (rowId: string, exclude: boolean, reason?: string) => {
+  const toggleRowExclusion = useCallback(async (rowId: string, exclude: boolean, reason?: string) => {
     try {
       await apiSend('/api/app-data/support-data', 'PATCH', { id: rowId, is_excluded: exclude, exclusion_reason: reason });
       await refreshData();
@@ -1156,9 +1176,9 @@ const clearColumnFilters = () => {
       logError('Error toggling row exclusion:', err);
       setError(`Erro ao ${exclude ? 'excluir' : 'restaurar'} item: ${err?.message}`);
     }
-  };
+  }, [refreshData]);
 
-  const updateRowNote = async (rowId: string, note: string) => {
+  const updateRowNote = useCallback(async (rowId: string, note: string) => {
     try {
       await apiSend('/api/app-data/support-data', 'PATCH', { id: rowId, notes: note });
       await refreshData();
@@ -1166,17 +1186,14 @@ const clearColumnFilters = () => {
       logError('Error updating row note:', err);
       setError(`Erro ao salvar nota: ${err?.message}`);
     }
-  };
+  }, [refreshData]);
 
-  const clearError = () => setError(null);
+  const clearError = useCallback(() => setError(null), []);
 
-  const resetData = () => {
-    setRawRows([]);
-    setCollaborators([]);
-    setDashboard(null);
-  };
+  // Zerar as linhas basta: colaboradores e dashboard são derivados delas.
+  const resetData = useCallback(() => setRawRows([]), []);
 
-  const clearAllData = async () => {
+  const clearAllData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
@@ -1192,7 +1209,7 @@ const clearColumnFilters = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [resetData, refreshData]);
 
   useEffect(() => {
     if (user?.role === 'admin') {
@@ -1210,14 +1227,15 @@ const clearColumnFilters = () => {
     }
   }, [user]);
 
-  return (
-    <AppContext.Provider
-      value={{
+  // Todo consumidor de useApp() re-renderiza quando esta referência muda. Sem o
+  // memo era um objeto novo a cada render do provider, então qualquer mudança de
+  // estado — inclusive as que não interessavam à tela aberta — repintava o app
+  // inteiro. Com as ações em useCallback, a referência agora só muda quando um
+  // dado realmente muda.
+  const value = useMemo<AppState>(() => ({
         rawRows,
-        rawSpreadsheetData,
         collaborators,
         dashboard,
-        periodDashboard,
         totalDashboard,
         isLoading,
         uploads,
@@ -1280,11 +1298,24 @@ const clearColumnFilters = () => {
         settingsLayout,
         pointsConfig,
         updatePointsConfig
-      }}
-    >
-      {children}
-    </AppContext.Provider>
-  );
+  }), [
+    rawRows, collaborators, dashboard, totalDashboard, isLoading, uploads,
+    selectedRows, selectedOdooRows, searchTerm, filterStatus, dateFilter,
+    customRange, columnFilters, setColumnFilter, clearColumnFilters, dateRange,
+    error, bitrixTickets, odooTickets, setRawData, setOdooTicketsData,
+    syncOdooTickets, syncBitrixTickets, resetData, clearAllData, deleteUpload,
+    deleteCollaborator, toggleRowExclusion, updateRowNote,
+    updateCollaboratorAvatar, updateCollaboratorBadges, updateCollaboratorGoals,
+    refreshData, clearError, importLogs, importIndicators, user, userRole,
+    userPermissions, isAuthReady, refreshSession, dashboardLayout, queueLayout,
+    dashboardLayouts, selectedLayoutId, updateDashboardLayout, updateQueueLayout,
+    updateSettingsLayout, saveDashboardLayout, deleteDashboardLayout,
+    selectDashboardLayout, bitrixUsers, bitrixSchedules, loadingBitrix,
+    fetchBitrixTimeman, fetchBitrixSchedules, handleTimemanAction,
+    lastKnownDurations, settingsLayout, pointsConfig, updatePointsConfig
+  ]);
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 export function useApp() {

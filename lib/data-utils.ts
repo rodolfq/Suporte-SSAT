@@ -1002,14 +1002,20 @@ export function calculateStats(data: SupportData[], config?: RankingPointsConfig
   const hourlyMap = new Map<number, number>();
   for (let i = 0; i < 24; i++) hourlyMap.set(i, 0);
 
-  const allDates = data.map(d => d.data.getTime()).filter(t => !isNaN(t) && t > 0);
-  const period = allDates.length > 0 ? {
-    start: new Date(Math.min(...allDates)),
-    end: new Date(Math.max(...allDates))
-  } : {
-    start: new Date(),
-    end: new Date()
-  };
+  // Numa passada só e sem espalhar o array em argumentos: `Math.min(...arr)`
+  // estoura a pilha em bases grandes (o limite de argumentos fica na casa das
+  // dezenas de milhares) e ainda percorria a lista duas vezes.
+  let menorData = Infinity;
+  let maiorData = -Infinity;
+  for (const d of data) {
+    const t = d.data.getTime();
+    if (isNaN(t) || t <= 0) continue;
+    if (t < menorData) menorData = t;
+    if (t > maiorData) maiorData = t;
+  }
+  const period = menorData === Infinity
+    ? { start: new Date(), end: new Date() }
+    : { start: new Date(menorData), end: new Date(maiorData) };
 
   const filteredData = data.filter(d => {
     // If the database already has an exclusion status, respect it

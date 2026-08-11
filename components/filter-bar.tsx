@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Calendar, ChevronDown, XCircle, Filter, User } from 'lucide-react';
 import { useApp } from '@/context/app-context';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,6 +30,30 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
     clearColumnFilters
   } = useApp();
 
+  /**
+   * O campo é controlado localmente e só publica o termo no contexto depois de
+   * 300 ms parado.
+   *
+   * Cada alteração de `searchTerm` refaz o recálculo de estatísticas sobre todas
+   * as linhas importadas. Ligado direto no onChange, isso rodava uma vez por
+   * tecla — era a origem da digitação travada.
+   */
+  const [inputBusca, setInputBusca] = useState(searchTerm);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Mantém o campo em dia quando o termo é limpo de fora (botão "limpar filtros").
+  useEffect(() => {
+    setInputBusca(prev => (prev === searchTerm ? prev : searchTerm));
+  }, [searchTerm]);
+
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
+
+  const aoDigitar = (valor: string) => {
+    setInputBusca(valor);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setSearchTerm(valor), 300);
+  };
+
   const [isDateOpen, setIsDateOpen] = useState(false);
   const [isCollaboratorOpen, setIsCollaboratorOpen] = useState(false);
   const [isClientOpen, setIsClientOpen] = useState(false);
@@ -58,6 +82,8 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
     columnFilters.rating !== null || columnFilters.messagesMin !== null;
 
   const clearFilters = () => {
+    clearTimeout(debounceRef.current);
+    setInputBusca('');
     setSearchTerm('');
     setFilterStatus('all');
     setDateFilter('all');
@@ -73,8 +99,8 @@ export default function FilterBar({ showStatusFilter = true, placeholder = "Busc
         <input
           type="text"
           placeholder={placeholder}
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          value={inputBusca}
+          onChange={(e) => aoDigitar(e.target.value)}
           className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none dark:text-slate-100"
         />
       </div>

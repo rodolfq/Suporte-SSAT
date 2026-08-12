@@ -295,9 +295,13 @@ export default function TrainingDashboard() {
         totalMinutes,
         totalTimeFormatted: formatMinutes(totalMinutes),
         tme,
+        sumDays,
+        countDays,
         tmt,
         tmtFormatted: tmt ? formatMinutes(tmt) : '-',
         mediaScore,
+        sumScore,
+        countScore,
         approvedDocs,
         attDocs,
         toolsApproved,
@@ -305,6 +309,44 @@ export default function TrainingDashboard() {
       };
     }).sort((a, b) => b.realizedTrainings - a.realizedTrainings || b.totalTrainings - a.totalTrainings || a.name.localeCompare(b.name));
   }, [trainersList, filteredPoints, filtroTreinador]);
+
+  // Totals row for the trainers summary table. TME and CSAT are recomputed from
+  // the raw sums/counts (weighted average) instead of averaging the per-trainer
+  // averages, which would distort the result when volumes differ.
+  const trainersTotals = useMemo(() => {
+    const acc = trainersStats.reduce(
+      (sum, t) => {
+        sum.totalTrainings += t.totalTrainings;
+        sum.realizedTrainings += t.realizedTrainings;
+        sum.cancelledTrainings += t.cancelledTrainings;
+        sum.absentTrainings += t.absentTrainings;
+        sum.totalMinutes += t.totalMinutes;
+        sum.sumDays += t.sumDays;
+        sum.countDays += t.countDays;
+        sum.sumScore += t.sumScore;
+        sum.countScore += t.countScore;
+        return sum;
+      },
+      {
+        totalTrainings: 0,
+        realizedTrainings: 0,
+        cancelledTrainings: 0,
+        absentTrainings: 0,
+        totalMinutes: 0,
+        sumDays: 0,
+        countDays: 0,
+        sumScore: 0,
+        countScore: 0
+      }
+    );
+
+    return {
+      ...acc,
+      totalTimeFormatted: formatMinutes(acc.totalMinutes),
+      tme: acc.countDays > 0 ? parseFloat((acc.sumDays / acc.countDays).toFixed(1)) : null,
+      mediaScore: acc.countScore > 0 ? parseFloat((acc.sumScore / acc.countScore).toFixed(2)) : null
+    };
+  }, [trainersStats]);
 
   // Compute map to 5 charts
   const chartMediaScore = useMemo(() => {
@@ -880,6 +922,40 @@ export default function TrainingDashboard() {
                     ))
                   )}
                 </tbody>
+                {trainersStats.length > 0 && (
+                  <tfoot className="border-t-2 border-slate-200 dark:border-slate-700">
+                    <tr className="bg-slate-50 dark:bg-slate-800/60">
+                      <td className="px-6 py-5 text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                        Total ({trainersStats.length} {trainersStats.length === 1 ? 'treinador' : 'treinadores'})
+                      </td>
+                      <td className="px-6 py-5 text-center font-black text-slate-900 dark:text-slate-100">{trainersTotals.totalTrainings}</td>
+                      <td className="px-6 py-5 text-center font-black text-emerald-600 dark:text-emerald-400">{trainersTotals.realizedTrainings}</td>
+                      <td className="px-6 py-5 text-center font-black text-red-500">{trainersTotals.cancelledTrainings}</td>
+                      <td className="px-6 py-5 text-center font-black text-amber-500">{trainersTotals.absentTrainings}</td>
+                      <td className="px-6 py-5 text-center">
+                        <span className="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-black">
+                          {trainersTotals.totalTimeFormatted}
+                        </span>
+                      </td>
+                      <td className="px-6 py-5 text-center font-black text-slate-600 dark:text-slate-400">
+                        {trainersTotals.tme !== null ? `${trainersTotals.tme} ${trainersTotals.tme === 1 ? 'dia' : 'dias'}` : '-'}
+                      </td>
+                      <td className="px-6 py-5 text-center">
+                        {trainersTotals.mediaScore !== null ? (
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black ${
+                            trainersTotals.mediaScore >= 8
+                              ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                              : trainersTotals.mediaScore >= 6
+                                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                                : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                          }`}>
+                            ★ {trainersTotals.mediaScore.toFixed(2)}
+                          </span>
+                        ) : '-'}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
@@ -1178,6 +1254,22 @@ export default function TrainingDashboard() {
                     </tr>
                   ))}
                 </tbody>
+                {dashboardStats.ranking.length > 0 && (
+                  <tfoot className="border-t-2 border-slate-200 dark:border-slate-700">
+                    <tr className="bg-slate-50 dark:bg-slate-800/60">
+                      <td className="px-8 py-5 text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                        Total ({dashboardStats.ranking.length} {dashboardStats.ranking.length === 1 ? 'colaborador' : 'colaboradores'})
+                      </td>
+                      <td className="px-8 py-5 text-center font-black text-slate-900 dark:text-slate-100">
+                        {parseFloat(dashboardStats.ranking.reduce((s, c) => s + c.score, 0).toFixed(1))} pts
+                      </td>
+                      <td className="px-8 py-5 text-center font-black text-slate-700 dark:text-slate-200">{dashboardStats.totalTrainings}</td>
+                      <td className="px-8 py-5 text-center font-black text-slate-700 dark:text-slate-200">{dashboardStats.totalDocs}</td>
+                      <td className="px-8 py-5 text-center font-black text-slate-700 dark:text-slate-200">{dashboardStats.totalTools}</td>
+                      <td className="px-8 py-5 text-right font-black text-red-500">{dashboardStats.totalFailures}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>

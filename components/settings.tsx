@@ -673,7 +673,8 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
   export_reports: false,
   sync_external_data: false,
   delete_data: false,
-  edit_collaborators: false
+  edit_collaborators: false,
+  reorder_queue: false
 };
 
 const DEFAULT_ADMIN_PERMISSIONS: UserPermissions = {
@@ -696,7 +697,8 @@ const DEFAULT_ADMIN_PERMISSIONS: UserPermissions = {
   export_reports: true,
   sync_external_data: true,
   delete_data: true,
-  edit_collaborators: true
+  edit_collaborators: true,
+  reorder_queue: true
 };
 
 export default function Settings() {
@@ -1035,7 +1037,8 @@ export default function Settings() {
     export_reports: 'Exportar Relatórios (Download)',
     sync_external_data: 'Sincronizar Dados Externos (Odoo/Bitrix)',
     delete_data: 'Excluir Dados e Uploads',
-    edit_collaborators: 'Editar Avatares e Colaboradores'
+    edit_collaborators: 'Editar Avatares e Colaboradores',
+    reorder_queue: 'Reordenar Fila de Atendimento'
   };
 
   const permissionCategories = {
@@ -1061,7 +1064,8 @@ export default function Settings() {
       'export_reports',
       'sync_external_data',
       'delete_data',
-      'edit_collaborators'
+      'edit_collaborators',
+      'reorder_queue'
     ] as (keyof UserPermissions)[]
   };
 

@@ -164,6 +164,8 @@ const COLUMN_MAPPINGS = {
   avaliacao: ['Avaliado pelos clientes', 'Avaliação cliente', 'Nota cliente', 'Rating', 'CSAT', 'Avaliação', 'Nota'],
   mensagens: ['Mensagens', 'Atendimentos', 'Tickets', 'Volume', 'Conversas', 'Interações', 'Qtd Mensagens', 'Qtd'],
   data: ['Criado em', 'Data', 'Timestamp', 'Date', 'Created At', 'Data de Criação', 'Data/Hora'],
+  agenteEncerrouEm: ['Agente encerrou em', 'Encerrado em', 'Data de encerramento', 'Data de fechamento', 'Chat encerrado em', 'Finalizado em', 'Closed At', 'Close Time'],
+  duracao: ['Duração', 'Duration', 'Tempo de atendimento', 'Tempo total de atendimento'],
   stage: ['Estágio', 'Stage', 'Status', 'Situação'],
   slaDeadline: ['SLA Deadline', 'Prazo SLA', 'Limite SLA', 'Vencimento SLA']
 };
@@ -748,12 +750,67 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
           }
         }
 
+        // Extraído do parsing de "data" (criação) para ser reaproveitado também
+        // por "agenteEncerrouEm" - ambos são timestamps da mesma planilha e
+        // seguem o mesmo formato/heurística de data detectados acima.
+        const parseFlexibleDate = (dateVal: any): Date | null => {
+          let parsedDate: Date | null = null;
+
+          if (dateVal instanceof Date) {
+            parsedDate = dateVal;
+          } else if (typeof dateVal === 'string' && dateVal.trim()) {
+            const cleanDate = dateVal.trim();
+
+            // Explicitly handle DD/MM/YYYY or MM/DD/YYYY based on detection
+            const ddmmyyyyRegex = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/;
+            const match = cleanDate.match(ddmmyyyyRegex);
+
+            if (match) {
+              let day, month;
+              if (dateFormat === 'DMY') {
+                day = parseInt(match[1]);
+                month = parseInt(match[2]) - 1;
+              } else {
+                month = parseInt(match[1]) - 1;
+                day = parseInt(match[2]);
+              }
+              let year = parseInt(match[3]);
+              if (match[3].length === 2) year += 2000;
+
+              const hour = match[4] ? parseInt(match[4]) : 0;
+              const min = match[5] ? parseInt(match[5]) : 0;
+              const sec = match[6] ? parseInt(match[6]) : 0;
+
+              const d = new Date(year, month, day, hour, min, sec);
+              if (!isNaN(d.getTime())) {
+                parsedDate = d;
+              }
+            }
+
+            // Fallback to standard parsing if regex didn't match or failed
+            if (!parsedDate) {
+              const d = new Date(cleanDate);
+              if (!isNaN(d.getTime())) {
+                parsedDate = d;
+              }
+            }
+          } else if (typeof dateVal === 'number') {
+            // Handle Excel serial dates
+            const serial = XLSX.SSF.parse_date_code(dateVal) as any;
+            if (serial) {
+              parsedDate = new Date(serial.y, serial.m - 1, serial.d, serial.H, serial.M, serial.S);
+            }
+          }
+
+          return (parsedDate && !isNaN(parsedDate.getTime())) ? parsedDate : null;
+        };
+
         const allRows: SupportData[] = json.map(row => {
           const val = (key: string) => {
             const colName = detectedColumns[key];
             return colName ? row[colName] : undefined;
           };
-          
+
           const parseTimeValue = (raw: any, inSeconds: boolean) => {
             if (raw === undefined || raw === null || String(raw).trim() === '' || String(raw).trim() === '-') return null;
             
@@ -799,59 +856,21 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
           };
 
           const tempo = parseTimeValue(val('tempoResposta'), tempoInSeconds);
-          const duracao = parseTimeValue(val('duracao'), duracaoInSeconds);
 
-          let dateVal = val('data');
-          let parsedDate: Date | null = null;
-          
-          if (dateVal instanceof Date) {
-            parsedDate = dateVal;
-          } else if (typeof dateVal === 'string' && dateVal.trim()) {
-            const cleanDate = dateVal.trim();
-            
-            // Explicitly handle DD/MM/YYYY or MM/DD/YYYY based on detection
-            const ddmmyyyyRegex = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/;
-            const match = cleanDate.match(ddmmyyyyRegex);
-            
-            if (match) {
-              let day, month;
-              if (dateFormat === 'DMY') {
-                day = parseInt(match[1]);
-                month = parseInt(match[2]) - 1;
-              } else {
-                month = parseInt(match[1]) - 1;
-                day = parseInt(match[2]);
-              }
-              let year = parseInt(match[3]);
-              if (match[3].length === 2) year += 2000;
-              
-              const hour = match[4] ? parseInt(match[4]) : 0;
-              const min = match[5] ? parseInt(match[5]) : 0;
-              const sec = match[6] ? parseInt(match[6]) : 0;
-              
-              const d = new Date(year, month, day, hour, min, sec);
-              if (!isNaN(d.getTime())) {
-                parsedDate = d;
-              }
-            }
-            
-            // Fallback to standard parsing if regex didn't match or failed
-            if (!parsedDate) {
-              const d = new Date(cleanDate);
-              if (!isNaN(d.getTime())) {
-                parsedDate = d;
-              }
-            }
-          } else if (typeof dateVal === 'number') {
-            // Handle Excel serial dates
-            parsedDate = XLSX.SSF.parse_date_code(dateVal) as any;
-            if (parsedDate) {
-              const d = new Date((parsedDate as any).y, (parsedDate as any).m - 1, (parsedDate as any).d, (parsedDate as any).H, (parsedDate as any).M, (parsedDate as any).S);
-              parsedDate = d;
-            }
+          const finalDate = parseFlexibleDate(val('data'));
+          const encerradoDate = parseFlexibleDate(val('agenteEncerrouEm'));
+
+          // Duração real do atendimento: diferença entre a criação da conversa
+          // ("Criado em") e o encerramento pelo agente ("Agente encerrou em"),
+          // não um valor solto de coluna (que além de nem sempre existir na
+          // planilha, é fácil de vir errado/desatualizado). Só cai para uma
+          // eventual coluna "Duração" quando falta uma das duas datas.
+          let duracao: number | null = null;
+          if (finalDate && encerradoDate && encerradoDate.getTime() >= finalDate.getTime()) {
+            duracao = (encerradoDate.getTime() - finalDate.getTime()) / 60000;
+          } else {
+            duracao = parseTimeValue(val('duracao'), duracaoInSeconds);
           }
-
-          const finalDate = (parsedDate && !isNaN(parsedDate.getTime())) ? parsedDate : null;
 
           let slaDeadline: Date | null = null;
           const rawSla = val('slaDeadline');
@@ -887,10 +906,13 @@ export async function processSpreadsheet(file: File): Promise<ProcessedResult> {
             cliente: String(val('cliente') || 'Desconhecido').trim(),
             tempoResposta: tempo,
             duracao: duracao,
+            duracaoSegundos: duracao !== null ? Math.round(duracao * 60) : null,
             avaliacao: parseFloat(val('avaliacao')) || 0,
             atendimentos: 1,
             mensagens: numMensagens,
             data: finalDate || new Date(0),
+            criadoEm: finalDate,
+            agenteEncerrouEm: encerradoDate,
             stage: val('stage') ? String(val('stage')) : undefined,
             slaDeadline,
             isExcluded,

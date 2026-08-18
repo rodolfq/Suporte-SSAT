@@ -45,6 +45,7 @@ export interface UserPermissions {
   sync_external_data: boolean;
   delete_data: boolean;
   edit_collaborators: boolean;
+  reorder_queue: boolean;
 }
 
 interface AppState {
@@ -154,7 +155,8 @@ const basePermissions: UserPermissions = {
   export_reports: false,
   sync_external_data: false,
   delete_data: false,
-  edit_collaborators: false
+  edit_collaborators: false,
+  reorder_queue: false
 };
 
 function getDateRange(filter: string, custom: { start: string; end: string }) {
@@ -447,7 +449,8 @@ const clearColumnFilters = useCallback(() => {
             export_reports: true,
             sync_external_data: true,
             delete_data: true,
-            edit_collaborators: true
+            edit_collaborators: true,
+            reorder_queue: true
           });
           return;
         }

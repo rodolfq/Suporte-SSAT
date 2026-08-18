@@ -158,7 +158,7 @@ interface SortableRowProps {
   isShiftHandover: boolean;
 }
 
-function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, isShiftHandover, onCheck, onLunchChange, lunchTimes, isReadOnly }: SortableRowProps & { lunchTimes: string[], isReadOnly?: boolean }) {
+function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, isShiftHandover, onCheck, onLunchChange, lunchTimes, isReadOnly, canReorder }: SortableRowProps & { lunchTimes: string[], isReadOnly?: boolean, canReorder?: boolean }) {
   const {
     attributes,
     listeners,
@@ -166,7 +166,7 @@ function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, i
     transform,
     transition,
     isDragging
-  } = useSortable({ id: op.id, disabled: isReadOnly });
+  } = useSortable({ id: op.id, disabled: isReadOnly || !canReorder });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -194,7 +194,7 @@ function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, i
     >
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
-          {!isReadOnly && (
+          {!isReadOnly && canReorder && (
             <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity">
               <GripVertical className="w-4 h-4" />
             </button>
@@ -355,7 +355,8 @@ export default function QueueDashboard() {
     availableDates
   } = useQueue();
 
-  const { queueLayout, updateQueueLayout, collaborators } = useApp();
+  const { queueLayout, updateQueueLayout, collaborators, userPermissions } = useApp();
+  const canReorderQueue = !!userPermissions?.reorder_queue;
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showAddModal, setShowAddModal] = useState(false);
@@ -425,6 +426,10 @@ export default function QueueDashboard() {
       const overOpIndex = currentQueue.findIndex((op) => op.id === over.id);
 
       if (activeOpIndex !== -1 && overOpIndex !== -1) {
+        // A linha só é arrastável quando `canReorderQueue` é true (o `useSortable`
+        // da linha já vem `disabled` sem a permissão), mas o guard aqui evita
+        // reordenar a fila caso um evento de drag ainda assim chegue até aqui.
+        if (!canReorderQueue) return;
         const newOrder = arrayMove(currentQueue, activeOpIndex, overOpIndex);
         updateQueueOrder(newOrder);
       } else {
@@ -859,6 +864,7 @@ export default function QueueDashboard() {
                                   lunchTimes={lunchTimes}
                                   isShiftHandover={currentQueueData?.responsavel_passagem_turno_id === op.operador_id}
                                   isReadOnly={isPastDate}
+                                  canReorder={canReorderQueue}
                                 />
                               ))}
                             </SortableContext>

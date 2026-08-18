@@ -3,25 +3,33 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '@/context/app-context';
 import { calculateStats, DashboardStats, SupportData } from '@/lib/data-utils';
-import { 
-  BarChart3, 
-  Calendar, 
-  FileText, 
-  ArrowRight, 
-  TrendingUp, 
-  TrendingDown, 
+import {
+  BarChart3,
+  Calendar,
+  FileText,
+  ArrowRight,
+  TrendingUp,
+  TrendingDown,
   Minus,
   Clock,
   ThumbsUp,
   MessageSquare,
-  Timer
+  Timer,
+  Ticket,
+  CheckCircle2
 } from 'lucide-react';
 import { motion } from 'motion/react';
+
+interface BitrixTicketStats {
+  opened: number;
+  closed: number;
+}
 
 interface ComparisonSlotProps {
   title: string;
   data: SupportData[];
   stats: DashboardStats | null;
+  ticketStats: BitrixTicketStats | null;
   onFileSelect: (id: string) => void;
   onDateChange: (start: string, end: string) => void;
   selectedFile: string;
@@ -31,14 +39,15 @@ interface ComparisonSlotProps {
   setMode: (mode: 'file' | 'date') => void;
 }
 
-function ComparisonSlot({ 
-  title, 
-  data, 
-  stats, 
-  onFileSelect, 
-  onDateChange, 
-  selectedFile, 
-  startDate, 
+function ComparisonSlot({
+  title,
+  data,
+  stats,
+  ticketStats,
+  onFileSelect,
+  onDateChange,
+  selectedFile,
+  startDate,
   endDate,
   mode,
   setMode
@@ -139,6 +148,20 @@ function ComparisonSlot({
                 </div>
                 <p className="text-xl font-black text-slate-900 dark:text-slate-100">{stats.avgDuracao.toFixed(1)}m</p>
               </div>
+              <div className="p-4 bg-amber-50/50 dark:bg-amber-900/20 rounded-2xl border border-amber-100 dark:border-amber-800">
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 mb-1">
+                  <Ticket className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Chamados Abertos</span>
+                </div>
+                <p className="text-xl font-black text-slate-900 dark:text-slate-100">{ticketStats?.opened ?? '---'}</p>
+              </div>
+              <div className="p-4 bg-teal-50/50 dark:bg-teal-900/20 rounded-2xl border border-teal-100 dark:border-teal-800">
+                <div className="flex items-center gap-2 text-teal-600 dark:text-teal-400 mb-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Chamados Fechados</span>
+                </div>
+                <p className="text-xl font-black text-slate-900 dark:text-slate-100">{ticketStats?.closed ?? '---'}</p>
+              </div>
             </div>
 
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
@@ -162,9 +185,42 @@ function ComparisonSlot({
   );
 }
 
+// Chamados Bitrix não têm uploadId, então no modo "Por Arquivo" o período usado
+// para contá-los é o intervalo (menor/maior data) dos atendimentos daquele arquivo.
+function getRowsDateRange(rows: SupportData[]): { start: Date; end: Date } | null {
+  if (rows.length === 0) return null;
+  let start = rows[0].data;
+  let end = rows[0].data;
+  for (const r of rows) {
+    if (r.data < start) start = r.data;
+    if (r.data > end) end = r.data;
+  }
+  const endOfDay = new Date(end);
+  endOfDay.setHours(23, 59, 59, 999);
+  return { start, end: endOfDay };
+}
+
+// `bitrixTickets` (via /api/app-data/bitrix-tickets) vem direto do banco em
+// snake_case (created_at/updated_at/status), diferente do endpoint /api/tickets
+// usado na tela de Tickets Bitrix, que mapeia para camelCase. Ambas as métricas
+// aqui giram em torno da data de abertura (created_at / "Criado em" no Bitrix):
+// "Abertos" conta tudo criado no período; "Fechados" espelha a definição de
+// "Resolvidos" da tela de Tickets Bitrix — status resolved/closed e criado no
+// período (não a data de resolução).
+function getBitrixTicketStats(tickets: any[], range: { start: Date; end: Date } | null) {
+  if (!range) return null;
+  const isWithinRange = (t: any) => {
+    const created = new Date(t.created_at);
+    return created >= range.start && created <= range.end;
+  };
+  const opened = tickets.filter(isWithinRange).length;
+  const closed = tickets.filter(t => (t.status === 'resolved' || t.status === 'closed') && isWithinRange(t)).length;
+  return { opened, closed };
+}
+
 export default function ComparisonView() {
-  const { rawRows } = useApp();
-  
+  const { rawRows, bitrixTickets } = useApp();
+
   const [modeA, setModeA] = useState<'file' | 'date'>('file');
   const [fileA, setFileA] = useState('');
   const [dateA, setDateA] = useState({ start: '', end: '' });
@@ -173,21 +229,42 @@ export default function ComparisonView() {
   const [fileB, setFileB] = useState('');
   const [dateB, setDateB] = useState({ start: '', end: '' });
 
+  const rangeA = useMemo(() => {
+    if (modeA === 'file') {
+      if (!fileA) return null;
+      return getRowsDateRange(rawRows.filter(r => r.uploadId === fileA));
+    }
+    if (!dateA.start || !dateA.end) return null;
+    const start = new Date(dateA.start);
+    const end = new Date(dateA.end);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }, [rawRows, modeA, fileA, dateA]);
+
+  const rangeB = useMemo(() => {
+    if (modeB === 'file') {
+      if (!fileB) return null;
+      return getRowsDateRange(rawRows.filter(r => r.uploadId === fileB));
+    }
+    if (!dateB.start || !dateB.end) return null;
+    const start = new Date(dateB.start);
+    const end = new Date(dateB.end);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }, [rawRows, modeB, fileB, dateB]);
+
   const statsA = useMemo(() => {
     let filtered = rawRows;
     if (modeA === 'file') {
       if (!fileA) return null;
       filtered = rawRows.filter(r => r.uploadId === fileA);
     } else {
-      if (!dateA.start || !dateA.end) return null;
-      const start = new Date(dateA.start);
-      const end = new Date(dateA.end);
-      end.setHours(23, 59, 59, 999);
-      filtered = rawRows.filter(r => r.data >= start && r.data <= end);
+      if (!rangeA) return null;
+      filtered = rawRows.filter(r => r.data >= rangeA.start && r.data <= rangeA.end);
     }
     if (filtered.length === 0) return null;
     return calculateStats(filtered).dashboard;
-  }, [rawRows, modeA, fileA, dateA]);
+  }, [rawRows, modeA, fileA, rangeA]);
 
   const statsB = useMemo(() => {
     let filtered = rawRows;
@@ -195,20 +272,38 @@ export default function ComparisonView() {
       if (!fileB) return null;
       filtered = rawRows.filter(r => r.uploadId === fileB);
     } else {
-      if (!dateB.start || !dateB.end) return null;
-      const start = new Date(dateB.start);
-      const end = new Date(dateB.end);
-      end.setHours(23, 59, 59, 999);
-      filtered = rawRows.filter(r => r.data >= start && r.data <= end);
+      if (!rangeB) return null;
+      filtered = rawRows.filter(r => r.data >= rangeB.start && r.data <= rangeB.end);
     }
     if (filtered.length === 0) return null;
     return calculateStats(filtered).dashboard;
-  }, [rawRows, modeB, fileB, dateB]);
+  }, [rawRows, modeB, fileB, rangeB]);
+
+  const ticketStatsA = useMemo(() => getBitrixTicketStats(bitrixTickets, rangeA), [bitrixTickets, rangeA]);
+  const ticketStatsB = useMemo(() => getBitrixTicketStats(bitrixTickets, rangeB), [bitrixTickets, rangeB]);
 
   const diff = (valA: number, valB: number, inverse = false) => {
-    // Base zero não permite calcular variação percentual (divisão por zero).
-    // `valB` zero é um resultado válido (queda de 100%) e não deve cair aqui.
-    if (!valA) return null;
+    // Sem base em nenhum dos dois períodos, não há o que comparar (ex: nenhum
+    // chamado aberto em A e nenhum em B).
+    if (!valA && !valB) return null;
+
+    // Base zero só em A (ex: "Duração Média" ficando 0 porque o período não
+    // tem dado de duração, ou nenhum chamado aberto/fechado em A) não permite
+    // % (divisão por zero), mas B ainda é uma diferença real — antes isso
+    // caía direto em "return null" e a tela mostrava "---" (lido como "vazio")
+    // mesmo havendo dado em B para comparar. Mostra a variação em valor
+    // absoluto nesse caso, em vez de esconder o campo inteiro.
+    if (!valA) {
+      const isPositive = valB > 0;
+      return {
+        value: Math.abs(valB).toFixed(1),
+        isAbsolute: true,
+        isPositive,
+        isFlat: false,
+        isGood: inverse ? !isPositive : isPositive,
+        icon: isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />
+      };
+    }
 
     const percentage = ((valB - valA) / valA) * 100;
 
@@ -222,6 +317,7 @@ export default function ComparisonView() {
 
     return {
       value: Math.abs(percentage).toFixed(1),
+      isAbsolute: false,
       isPositive,
       isFlat,
       isGood,
@@ -236,6 +332,8 @@ export default function ComparisonView() {
     { label: 'Avaliação Média', valA: statsA?.avgRating, valB: statsB?.avgRating, inverse: false },
     { label: 'Tempo Resposta', valA: statsA?.avgResponseTime, valB: statsB?.avgResponseTime, inverse: true },
     { label: 'Duração Média', valA: statsA?.avgDuracao, valB: statsB?.avgDuracao, inverse: true },
+    { label: 'Chamados Abertos', valA: ticketStatsA?.opened, valB: ticketStatsB?.opened, inverse: true },
+    { label: 'Chamados Fechados', valA: ticketStatsA?.closed, valB: ticketStatsB?.closed, inverse: false },
   ];
 
   return (
@@ -249,10 +347,11 @@ export default function ComparisonView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-11 gap-6 items-start">
         <div className="lg:col-span-5 h-full">
-          <ComparisonSlot 
+          <ComparisonSlot
             title="Período / Arquivo A"
             data={rawRows}
             stats={statsA}
+            ticketStats={ticketStatsA}
             mode={modeA}
             setMode={setModeA}
             selectedFile={fileA}
@@ -271,10 +370,11 @@ export default function ComparisonView() {
         </div>
 
         <div className="lg:col-span-5 h-full">
-          <ComparisonSlot 
+          <ComparisonSlot
             title="Período / Arquivo B"
             data={rawRows}
             stats={statsB}
+            ticketStats={ticketStatsB}
             mode={modeB}
             setMode={setModeB}
             selectedFile={fileB}
@@ -305,7 +405,7 @@ export default function ComparisonView() {
                   <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{item.label}</p>
                   <div className="flex items-end gap-3">
                     <p className="text-3xl font-black">
-                      {!d ? '---' : d.isFlat ? `${d.value}%` : `${d.isPositive ? '+' : '-'}${d.value}%`}
+                      {!d ? '---' : d.isFlat ? `${d.value}%` : `${d.isPositive ? '+' : '-'}${d.value}${d.isAbsolute ? '' : '%'}`}
                     </p>
                     {d && (
                       <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black uppercase ${

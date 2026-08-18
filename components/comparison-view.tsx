@@ -206,16 +206,28 @@ export default function ComparisonView() {
   }, [rawRows, modeB, fileB, dateB]);
 
   const diff = (valA: number, valB: number, inverse = false) => {
-    if (!valA || !valB) return null;
+    // Base zero não permite calcular variação percentual (divisão por zero).
+    // `valB` zero é um resultado válido (queda de 100%) e não deve cair aqui.
+    if (!valA) return null;
+
     const percentage = ((valB - valA) / valA) * 100;
+
+    // Variação que arredonda para 0.0% não é nem alta nem queda. Antes disso
+    // caía sempre no ramo "negativo" (percentage > 0 é falso quando é 0),
+    // exibindo "-0.0%" com o rótulo "Queda" mesmo quando A e B eram
+    // essencialmente iguais — o que o usuário lia como "a tela não calcula".
+    const isFlat = Math.abs(percentage) < 0.05;
     const isPositive = percentage > 0;
-    const isGood = inverse ? !isPositive : isPositive;
-    
+    const isGood = isFlat ? null : (inverse ? !isPositive : isPositive);
+
     return {
       value: Math.abs(percentage).toFixed(1),
       isPositive,
+      isFlat,
       isGood,
-      icon: isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />
+      icon: isFlat
+        ? <Minus className="w-3 h-3" />
+        : (isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)
     };
   };
 
@@ -293,20 +305,20 @@ export default function ComparisonView() {
                   <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{item.label}</p>
                   <div className="flex items-end gap-3">
                     <p className="text-3xl font-black">
-                      {d ? `${d.isPositive ? '+' : '-'}${d.value}%` : '---'}
+                      {!d ? '---' : d.isFlat ? `${d.value}%` : `${d.isPositive ? '+' : '-'}${d.value}%`}
                     </p>
                     {d && (
                       <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black uppercase ${
-                        d.isGood ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                        d.isFlat ? 'bg-slate-500/20 text-slate-400' : d.isGood ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
                       }`}>
                         {d.icon}
-                        {d.isGood ? 'Melhoria' : 'Queda'}
+                        {d.isFlat ? 'Estável' : d.isGood ? 'Melhoria' : 'Queda'}
                       </div>
                     )}
                   </div>
                   <div className="w-full bg-white/10 dark:bg-slate-800 h-1 rounded-full overflow-hidden mt-4">
-                    <div 
-                      className={`h-full transition-all duration-1000 ${d?.isGood ? 'bg-emerald-400' : 'bg-rose-400'}`}
+                    <div
+                      className={`h-full transition-all duration-1000 ${!d || d.isFlat ? 'bg-slate-500' : d.isGood ? 'bg-emerald-400' : 'bg-rose-400'}`}
                       style={{ width: d ? `${Math.min(parseFloat(d.value), 100)}%` : '0%' }}
                     />
                   </div>
@@ -321,14 +333,16 @@ export default function ComparisonView() {
               Resumo do Comparativo
             </h4>
             <p className="text-slate-400 dark:text-slate-500 text-sm leading-relaxed">
-              A comparação entre os períodos selecionados mostra uma variação de 
+              A comparação entre os períodos selecionados mostra uma variação de
               <span className="text-white font-bold mx-1">
-                {diff(statsA.totalAtendimentos, statsB.totalAtendimentos)?.value}%
-              </span> 
-              no volume de atendimentos. 
-              {statsB.avgRating > statsA.avgRating ? 
-                ' A qualidade percebida pelo cliente aumentou, refletindo uma melhoria nos processos.' : 
-                ' Houve uma redução na nota média, sugerindo a necessidade de revisar os atendimentos deste período.'
+                {diff(statsA.totalAtendimentos, statsB.totalAtendimentos)?.value ?? '0.0'}%
+              </span>
+              no volume de atendimentos.
+              {statsB.avgRating > statsA.avgRating ?
+                ' A qualidade percebida pelo cliente aumentou, refletindo uma melhoria nos processos.' :
+                statsB.avgRating < statsA.avgRating ?
+                ' Houve uma redução na nota média, sugerindo a necessidade de revisar os atendimentos deste período.' :
+                ' A nota média se manteve estável entre os dois períodos.'
               }
             </p>
           </div>

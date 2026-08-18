@@ -10,7 +10,11 @@ export interface DbUser {
 }
 
 export async function getUserByEmail(email: string): Promise<DbUser | null> {
-  return queryOne<DbUser>('SELECT * FROM users WHERE lower(email) = lower($1)', [email]);
+  // `createUser` grava o e-mail já com trim() (abaixo). Sem o mesmo trim aqui,
+  // um espaço colado sem querer no login (comum em copiar/colar de planilha ou
+  // autofill) faz a busca não encontrar o usuário e cair no "senha incorreta"
+  // mesmo com a senha certa.
+  return queryOne<DbUser>('SELECT * FROM users WHERE lower(email) = lower($1)', [email.trim()]);
 }
 
 export async function getUserById(id: string): Promise<DbUser | null> {

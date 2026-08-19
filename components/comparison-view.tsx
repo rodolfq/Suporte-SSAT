@@ -23,6 +23,20 @@ import { motion } from 'motion/react';
 interface BitrixTicketStats {
   opened: number;
   closed: number;
+  avgDuracao: number;
+}
+
+// `avgDuracao` vem em minutos; convertida para a maior unidade legível
+// (minutos < 1h, horas < 24h, dias e horas a partir daí).
+function formatDuracao(minutes: number): string {
+  if (minutes < 60) return `${minutes.toFixed(0)}m`;
+
+  const hours = minutes / 60;
+  if (hours < 24) return `${hours.toFixed(1).replace('.0', '')}h`;
+
+  const days = Math.floor(hours / 24);
+  const remainingHours = Math.round(hours % 24);
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 
 interface ComparisonSlotProps {
@@ -146,7 +160,7 @@ function ComparisonSlot({
                   <Clock className="w-3.5 h-3.5" />
                   <span className="text-[10px] font-black uppercase tracking-widest">Duração</span>
                 </div>
-                <p className="text-xl font-black text-slate-900 dark:text-slate-100">{stats.avgDuracao.toFixed(1)}m</p>
+                <p className="text-xl font-black text-slate-900 dark:text-slate-100">{ticketStats ? formatDuracao(ticketStats.avgDuracao) : '---'}</p>
               </div>
               <div className="p-4 bg-amber-50/50 dark:bg-amber-900/20 rounded-2xl border border-amber-100 dark:border-amber-800">
                 <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 mb-1">
@@ -202,11 +216,15 @@ function getRowsDateRange(rows: SupportData[]): { start: Date; end: Date } | nul
 
 // `bitrixTickets` (via /api/app-data/bitrix-tickets) vem direto do banco em
 // snake_case (created_at/updated_at/status), diferente do endpoint /api/tickets
-// usado na tela de Tickets Bitrix, que mapeia para camelCase. Ambas as métricas
+// usado na tela de Tickets Bitrix, que mapeia para camelCase. Todas as métricas
 // aqui giram em torno da data de abertura (created_at / "Criado em" no Bitrix):
-// "Abertos" conta tudo criado no período; "Fechados" espelha a definição de
-// "Resolvidos" da tela de Tickets Bitrix — status resolved/closed e criado no
-// período (não a data de resolução).
+// "Abertos" conta tudo criado no período; "Fechados" e "Duração Média" espelham
+// a definição de "Resolvidos" da tela de Tickets Bitrix — status resolved/closed
+// e criado no período (não a data de resolução).
+//
+// O Bitrix não expõe um timestamp explícito de "quando o status virou
+// Resolvido", então, como já é feito na tela de Tickets Bitrix (avgResolutionTime),
+// usamos `updated_at` como o momento da resolução do chamado.
 function getBitrixTicketStats(tickets: any[], range: { start: Date; end: Date } | null) {
   if (!range) return null;
   const isWithinRange = (t: any) => {
@@ -214,8 +232,12 @@ function getBitrixTicketStats(tickets: any[], range: { start: Date; end: Date } 
     return created >= range.start && created <= range.end;
   };
   const opened = tickets.filter(isWithinRange).length;
-  const closed = tickets.filter(t => (t.status === 'resolved' || t.status === 'closed') && isWithinRange(t)).length;
-  return { opened, closed };
+  const resolvedInRange = tickets.filter(t => (t.status === 'resolved' || t.status === 'closed') && isWithinRange(t) && t.created_at && t.updated_at);
+  const closed = resolvedInRange.length;
+  const avgDuracao = closed > 0
+    ? resolvedInRange.reduce((acc, t) => acc + (new Date(t.updated_at).getTime() - new Date(t.created_at).getTime()), 0) / closed / 60000
+    : 0;
+  return { opened, closed, avgDuracao };
 }
 
 export default function ComparisonView() {
@@ -331,7 +353,7 @@ export default function ComparisonView() {
     { label: 'Atendimentos', valA: statsA?.totalAtendimentos, valB: statsB?.totalAtendimentos, inverse: false },
     { label: 'Avaliação Média', valA: statsA?.avgRating, valB: statsB?.avgRating, inverse: false },
     { label: 'Tempo Resposta', valA: statsA?.avgResponseTime, valB: statsB?.avgResponseTime, inverse: true },
-    { label: 'Duração Média', valA: statsA?.avgDuracao, valB: statsB?.avgDuracao, inverse: true },
+    { label: 'Duração Média', valA: ticketStatsA?.avgDuracao, valB: ticketStatsB?.avgDuracao, inverse: true },
     { label: 'Chamados Abertos', valA: ticketStatsA?.opened, valB: ticketStatsB?.opened, inverse: true },
     { label: 'Chamados Fechados', valA: ticketStatsA?.closed, valB: ticketStatsB?.closed, inverse: false },
   ];

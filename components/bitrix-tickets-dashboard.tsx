@@ -54,6 +54,7 @@ export default function BitrixTicketsDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [dateFilter, setDateFilter] = useState<string>('month');
+  const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<'total' | 'resolved' | 'in_progress' | 'overdue'>('total');
@@ -139,6 +140,7 @@ export default function BitrixTicketsDashboard() {
     // 1. Calculate the start date for the current filter
     const now = new Date();
     const filterStartDate = new Date();
+    const filterEndDate = new Date(8640000000000000); // sem limite superior por padrão
     if (dateFilter === 'today') filterStartDate.setHours(0, 0, 0, 0);
     else if (dateFilter === 'week') {
       const day = filterStartDate.getDay();
@@ -150,20 +152,28 @@ export default function BitrixTicketsDashboard() {
     } else if (dateFilter === 'year') {
       filterStartDate.setMonth(0, 1);
       filterStartDate.setHours(0, 0, 0, 0);
+    } else if (dateFilter === 'custom') {
+      filterStartDate.setTime(customRange.start ? new Date(`${customRange.start}T00:00:00`).getTime() : new Date(2000, 0, 1).getTime());
+      filterEndDate.setTime(customRange.end ? new Date(`${customRange.end}T23:59:59.999`).getTime() : filterEndDate.getTime());
     } else {
       filterStartDate.setFullYear(2000); // "All" - far in the past
     }
+
+    const isWithinFilterRange = (dateStr: string) => {
+      const d = new Date(dateStr);
+      return d >= filterStartDate && d <= filterEndDate;
+    };
 
     // 2. Global stats (Summary Cards)
     // Resolved and Total respect the filter
     // In Progress and Overdue are ALWAYS current (unfiltered)
     const resolved = tickets.filter(t => {
       const isResolved = t.status === 'resolved' || t.status === 'closed';
-      const isWithinFilter = new Date(t.createdAt) >= filterStartDate;
+      const isWithinFilter = isWithinFilterRange(t.createdAt);
       return isResolved && isWithinFilter;
     }).length;
 
-    const totalInPeriod = tickets.filter(t => new Date(t.createdAt) >= filterStartDate).length;
+    const totalInPeriod = tickets.filter(t => isWithinFilterRange(t.createdAt)).length;
 
     const inProgress = tickets.filter(t => t.status !== 'resolved' && t.status !== 'closed').length;
     
@@ -175,9 +185,9 @@ export default function BitrixTicketsDashboard() {
 
     // Avg Resolution Time (in days) - for the filtered period
     const resolvedTicketsInPeriod = tickets.filter(t => 
-      (t.status === 'resolved' || t.status === 'closed') && 
+      (t.status === 'resolved' || t.status === 'closed') &&
       t.createdAt && t.updatedAt &&
-      new Date(t.createdAt) >= filterStartDate
+      isWithinFilterRange(t.createdAt)
     );
     
     const totalResolutionTime = resolvedTicketsInPeriod.reduce((acc, t) => {
@@ -200,7 +210,7 @@ export default function BitrixTicketsDashboard() {
       const isResolved = t.status === 'resolved' || t.status === 'closed';
       const isOverdue = t.displayStatus === 'Atrasada';
       const isInProgress = !isResolved;
-      const isWithinFilter = new Date(t.createdAt) >= filterStartDate;
+      const isWithinFilter = isWithinFilterRange(t.createdAt);
 
       // "Andamento" and "Vencidos" ignore the filter
       if (isInProgress) {
@@ -271,7 +281,7 @@ export default function BitrixTicketsDashboard() {
       // Finally, if it's NOT inProgress or overdue, respect the date filter
       // (Because Resolved and Total should respect the filter)
       const isResolved = t.status === 'resolved' || t.status === 'closed';
-      if (isResolved && new Date(t.createdAt) < filterStartDate) {
+      if (isResolved && !isWithinFilterRange(t.createdAt)) {
         return false;
       }
 
@@ -320,7 +330,7 @@ export default function BitrixTicketsDashboard() {
       filteredTickets,
       formatTime
     };
-  }, [tickets, dateFilter, activeFilter, selectedAnalyst, subFilter, sortConfig, ticketSortConfig]);
+  }, [tickets, dateFilter, customRange, activeFilter, selectedAnalyst, subFilter, sortConfig, ticketSortConfig]);
 
   const chartData = [
     { name: 'Resolvidos', value: stats.resolved, color: '#10b981' },
@@ -412,10 +422,14 @@ export default function BitrixTicketsDashboard() {
             >
               <Calendar className="w-4 h-4" />
               <span>
-                {dateFilter === 'all' ? 'Todo o Período' : 
+                {dateFilter === 'all' ? 'Todo o Período' :
                  dateFilter === 'today' ? 'Hoje' :
                  dateFilter === 'week' ? 'Esta Semana' :
-                 dateFilter === 'month' ? 'Este Mês' : 'Este Ano'}
+                 dateFilter === 'month' ? 'Este Mês' :
+                 dateFilter === 'year' ? 'Este Ano' :
+                 (customRange.start && customRange.end)
+                   ? `${customRange.start.split('-').reverse().join('/')} - ${customRange.end.split('-').reverse().join('/')}`
+                   : 'Personalizado'}
               </span>
               <ChevronDown className={`w-4 h-4 transition-transform ${isFilterOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -423,16 +437,46 @@ export default function BitrixTicketsDashboard() {
             {isFilterOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setIsFilterOpen(false)} />
-                <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-20 p-2">
-                  {['all', 'today', 'week', 'month', 'year'].map((f) => (
+                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-20 p-2">
+                  {['all', 'today', 'week', 'month', 'year', 'custom'].map((f) => (
                     <button
                       key={f}
-                      onClick={() => { setDateFilter(f); setIsFilterOpen(false); }}
+                      onClick={() => { setDateFilter(f); if (f !== 'custom') setIsFilterOpen(false); }}
                       className={`w-full text-left px-4 py-2 rounded-xl text-sm ${dateFilter === f ? 'bg-primary/10 text-primary font-bold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                     >
-                      {f === 'all' ? 'Todo o Período' : f === 'today' ? 'Hoje' : f === 'week' ? 'Esta Semana' : f === 'month' ? 'Este Mês' : 'Este Ano'}
+                      {f === 'all' ? 'Todo o Período' : f === 'today' ? 'Hoje' : f === 'week' ? 'Esta Semana' : f === 'month' ? 'Este Mês' : f === 'year' ? 'Este Ano' : 'Personalizado'}
                     </button>
                   ))}
+
+                  {dateFilter === 'custom' && (
+                    <div className="p-3 mt-1 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Início</label>
+                        <input
+                          type="date"
+                          value={customRange.start}
+                          onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs focus:ring-2 focus:ring-primary/20 outline-none dark:text-slate-100"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Fim</label>
+                        <input
+                          type="date"
+                          value={customRange.end}
+                          onChange={(e) => setCustomRange(prev => ({ ...prev, end: e.target.value }))}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs focus:ring-2 focus:ring-primary/20 outline-none dark:text-slate-100"
+                        />
+                      </div>
+                      <button
+                        onClick={() => setIsFilterOpen(false)}
+                        disabled={!customRange.start || !customRange.end}
+                        className="w-full py-2 bg-primary text-white rounded-lg text-xs font-bold shadow-lg shadow-primary/20 disabled:opacity-50"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}

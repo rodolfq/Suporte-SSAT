@@ -47,11 +47,11 @@ export async function createOperator(nome: string, horarioTrabalho?: string) {
   return row!;
 }
 
-const OPERATOR_UPDATABLE_FIELDS = ['status', 'ausente_ate', 'horario_trabalho', 'posicao_fixa'];
+const OPERATOR_UPDATABLE_FIELDS = ['status', 'ausente_ate', 'horario_trabalho', 'posicao_fixa', 'ignorar_na_fila'];
 
 export async function updateOperator(
   id: string,
-  fields: Partial<{ status: string; ausente_ate: string | null; horario_trabalho: string; posicao_fixa: number | null }>
+  fields: Partial<{ status: string; ausente_ate: string | null; horario_trabalho: string; posicao_fixa: number | null; ignorar_na_fila: boolean }>
 ) {
   const keys = Object.keys(fields).filter(k => OPERATOR_UPDATABLE_FIELDS.includes(k));
   if (keys.length === 0) return;

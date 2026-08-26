@@ -95,6 +95,16 @@ export async function updateSupportDataNote(id: string, note: string) {
   await query('UPDATE support_data SET notes = $2 WHERE id = $1', [id, note]);
 }
 
+const EDITABLE_FIELDS = new Set(['colaborador', 'tempo_resposta', 'tempo_resposta_segundos', 'avaliacao']);
+
+export async function updateSupportDataFields(id: string, fields: Record<string, any>) {
+  const cols = Object.keys(fields).filter(c => EDITABLE_FIELDS.has(c));
+  if (cols.length === 0) return;
+  const setClause = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
+  const values = cols.map(c => fields[c]);
+  await query(`UPDATE support_data SET ${setClause} WHERE id = $1`, [id, ...values]);
+}
+
 // --- collaborator_settings ---
 
 export async function listCollaboratorSettings() {

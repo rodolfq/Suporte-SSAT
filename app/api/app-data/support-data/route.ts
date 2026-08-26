@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api-auth';
+import { requireSession, requirePermission } from '@/lib/api-auth';
 import {
   listSupportData,
   upsertSupportData,
@@ -9,6 +9,7 @@ import {
   deleteAllSupportData,
   updateSupportDataExclusion,
   updateSupportDataNote,
+  updateSupportDataFields,
 } from '@/lib/db/app-data';
 
 export async function GET(req: NextRequest) {
@@ -30,13 +31,24 @@ export async function PUT(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   if (!requireSession(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { id, is_excluded, exclusion_reason, notes } = await req.json();
+  const { id, is_excluded, exclusion_reason, notes, colaborador, tempo_resposta, tempo_resposta_segundos, avaliacao } = await req.json();
   if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
   if (is_excluded !== undefined) {
     await updateSupportDataExclusion(id, is_excluded, exclusion_reason);
   }
   if (notes !== undefined) {
     await updateSupportDataNote(id, notes);
+  }
+  const editableFields: Record<string, any> = {};
+  if (colaborador !== undefined) editableFields.colaborador = colaborador;
+  if (tempo_resposta !== undefined) editableFields.tempo_resposta = tempo_resposta;
+  if (tempo_resposta_segundos !== undefined) editableFields.tempo_resposta_segundos = tempo_resposta_segundos;
+  if (avaliacao !== undefined) editableFields.avaliacao = avaliacao;
+  if (Object.keys(editableFields).length > 0) {
+    if (!(await requirePermission(req, 'edit_raw_data'))) {
+      return NextResponse.json({ error: 'Acesso negado' }, { status: 403 });
+    }
+    await updateSupportDataFields(id, editableFields);
   }
   return NextResponse.json({ success: true });
 }

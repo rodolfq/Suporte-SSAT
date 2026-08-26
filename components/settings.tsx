@@ -674,7 +674,8 @@ const DEFAULT_USER_PERMISSIONS: UserPermissions = {
   sync_external_data: false,
   delete_data: false,
   edit_collaborators: false,
-  reorder_queue: false
+  reorder_queue: false,
+  edit_raw_data: false
 };
 
 const DEFAULT_ADMIN_PERMISSIONS: UserPermissions = {
@@ -698,7 +699,8 @@ const DEFAULT_ADMIN_PERMISSIONS: UserPermissions = {
   sync_external_data: true,
   delete_data: true,
   edit_collaborators: true,
-  reorder_queue: true
+  reorder_queue: true,
+  edit_raw_data: true
 };
 
 export default function Settings() {
@@ -1038,7 +1040,8 @@ export default function Settings() {
     sync_external_data: 'Sincronizar Dados Externos (Odoo/Bitrix)',
     delete_data: 'Excluir Dados e Uploads',
     edit_collaborators: 'Editar Avatares e Colaboradores',
-    reorder_queue: 'Reordenar Fila de Atendimento'
+    reorder_queue: 'Reordenar Fila de Atendimento',
+    edit_raw_data: 'Editar Chats em Dados Brutos'
   };
 
   const permissionCategories = {
@@ -1065,7 +1068,8 @@ export default function Settings() {
       'sync_external_data',
       'delete_data',
       'edit_collaborators',
-      'reorder_queue'
+      'reorder_queue',
+      'edit_raw_data'
     ] as (keyof UserPermissions)[]
   };
 

@@ -67,6 +67,14 @@ export interface Lunch {
   horario: string | null;
 }
 
+// Vagas de almoço por horário: no máximo essas quantidades de pessoas ao mesmo
+// tempo, para manter cobertura mínima da fila.
+export const LUNCH_CAPACITY: Record<string, number> = {
+  '11:00': 1,
+  '12:00': 4,
+  '13:00': 4
+};
+
 export interface Schedule {
   id: string;
   data: string;
@@ -99,6 +107,7 @@ interface QueueState {
   addOperatorToQueue: (operadorId: string) => Promise<void>;
   addCollaboratorToQueue: (nome: string) => Promise<void>;
   removeOperatorFromQueue: (queueOperatorId: string) => Promise<void>;
+  removeOperatorPermanently: (operadorId: string) => Promise<void>;
   updateSchedule: (tipo: 'terca' | 'quarta' | 'presencial', names: string, dateStr: string) => Promise<void>;
   deleteSchedule: (id: string) => Promise<void>;
   completeActivity: (id: string) => Promise<void>;
@@ -443,6 +452,17 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   };
 
   const updateLunch = async (id: string, horario: string) => {
+    if (horario) {
+      const capacity = LUNCH_CAPACITY[horario];
+      if (capacity !== undefined) {
+        const occupied = currentQueue.filter(op => op.almoco?.horario === horario && op.id !== id).length;
+        if (occupied >= capacity) {
+          alert(`O horário de almoço das ${horario} já está com o limite de ${capacity} ${capacity === 1 ? 'pessoa' : 'pessoas'} preenchido.`);
+          return;
+        }
+      }
+    }
+
     try {
       await apiSend('/api/queue/almocos', 'PATCH', { filaOperadorId: id, horario });
 
@@ -552,6 +572,25 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       fetchCurrentQueue(currentQueueData?.data);
     } catch (err: any) {
       console.error('Error removing operator from queue:', err);
+    }
+  };
+
+  // Remoção permanente: marca `ignorar_na_fila = true` no cadastro do operador,
+  // então `listActiveOperators` para de trazê-lo na geração das próximas filas.
+  // O histórico dele (atividades, filas passadas) não é apagado. Também tira o
+  // operador da fila de hoje, se ele estiver nela.
+  const removeOperatorPermanently = async (operadorId: string) => {
+    try {
+      await apiSend('/api/queue/operators', 'PATCH', { id: operadorId, ignorar_na_fila: true });
+      setOperators(prev => prev.map(op => op.id === operadorId ? { ...op, ignorar_na_fila: true } : op));
+
+      const queueOperator = currentQueue.find(op => op.operador_id === operadorId);
+      if (queueOperator) {
+        await removeOperatorFromQueue(queueOperator.id);
+      }
+    } catch (err: any) {
+      console.error('Error permanently removing operator:', err);
+      alert('Erro ao remover analista da fila.');
     }
   };
 
@@ -809,6 +848,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     addOperatorToQueue,
     addCollaboratorToQueue,
     removeOperatorFromQueue,
+    removeOperatorPermanently,
     updateSchedule,
     deleteSchedule,
     completeActivity,

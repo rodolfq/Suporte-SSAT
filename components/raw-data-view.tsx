@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useApp } from '@/context/app-context';
 import FilterBar from './filter-bar';
-import { Table, ArrowLeft, AlertCircle, CheckCircle2, XCircle, Filter, Trash2, AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, MessageSquare, RotateCw } from 'lucide-react';
+import { Table, ArrowLeft, AlertCircle, CheckCircle2, XCircle, Filter, Trash2, AlertTriangle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, MessageSquare, RotateCw, Pencil, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 
@@ -14,13 +14,38 @@ interface RawDataViewProps {
 const ITEMS_PER_PAGE = 50;
 
 export default function RawDataView({ onBack }: RawDataViewProps) {
-  const { selectedRows, toggleRowExclusion, updateRowNote, columnFilters, user } = useApp();
+  const { selectedRows, toggleRowExclusion, updateRowNote, updateRowFields, columnFilters, user, userPermissions } = useApp();
+  const canEditRawData = userPermissions?.edit_raw_data === true;
   const [rowToToggle, setRowToToggle] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [showNoteDialog, setShowNoteDialog] = useState(false);
   const [noteRowId, setNoteRowId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editRowId, setEditRowId] = useState<string | null>(null);
+  const [editColaborador, setEditColaborador] = useState('');
+  const [editTempoRespostaSeg, setEditTempoRespostaSeg] = useState('');
+  const [editAvaliacao, setEditAvaliacao] = useState('0');
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
+
+  // Colunas numéricas ordenáveis — avaliação fica de fora a pedido, já que é uma
+  // nota (1-5) e não uma métrica de volume/tempo.
+  const SORTABLE_COLUMNS = ['#', 'Mensagens', 'Duração da conversa', 'Tempo inicial de resposta'];
+
+  // Colunas com botão de edição por célula (o modal de edição continua único
+  // por linha, cobrindo os três campos de uma vez).
+  const EDITABLE_COLUMNS = ['Colaborador', 'Tempo inicial de resposta', 'Avaliado pelos clientes'];
+
+  const handleSort = useCallback((column: string) => {
+    setSortConfig(prev => {
+      if (prev?.column === column) {
+        return { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { column, direction: 'asc' };
+    });
+    setCurrentPage(1);
+  }, []);
 
   const normalizeColumnName = (key: string): string => {
     const normalized = key.replace(/[\u0400-\u04FF]/g, char => {
@@ -111,7 +136,17 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
       if (r.rawData) {
         Object.entries(r.rawData).forEach(([key, value]) => {
           const normalizedKey = normalizeColumnName(key);
-          if (normalizedKey !== 'Colaborador' && normalizedKey !== 'Cliente' && normalizedKey !== 'Mensagens') {
+          // Colaborador/Cliente/Mensagens/Tempo inicial de resposta/Avaliado pelos
+          // clientes são editáveis e têm campos canônicos próprios em `r` (que já
+          // refletem uma edição salva) — o raw_data original da planilha nunca deve
+          // sobrescrevê-los, senão a tabela volta a mostrar o valor pré-edição.
+          if (
+            normalizedKey !== 'Colaborador' &&
+            normalizedKey !== 'Cliente' &&
+            normalizedKey !== 'Mensagens' &&
+            normalizedKey !== 'Tempo inicial de resposta' &&
+            normalizedKey !== 'Avaliado pelos clientes'
+          ) {
             baseRow[normalizedKey] = value;
           }
         });
@@ -125,12 +160,15 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
       if (!baseRow['O agente encerrou em']) {
         baseRow['O agente encerrou em'] = r.rawData?.['O agente encerrou em'] || r.rawData?.['Agente encerrou em'] || '-';
       }
+      let duracaoSortSeconds: number | null = null;
       if (!baseRow['Duração da conversa'] || baseRow['Duração da conversa'] === '-') {
         const rawSeconds = r.duracaoSegundos;
         if (rawSeconds !== null && rawSeconds !== undefined) {
+          duracaoSortSeconds = rawSeconds;
           baseRow['Duração da conversa'] = formatRawTimeToDisplay(rawSeconds);
         } else if (r.duracao !== null && r.duracao !== undefined) {
           const seconds = r.duracao * 60;
+          duracaoSortSeconds = seconds;
           baseRow['Duração da conversa'] = formatRawTimeToDisplay(seconds);
         } else {
           baseRow['Duração da conversa'] = '-';
@@ -139,29 +177,25 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
         const existing = baseRow['Duração da conversa'];
         const num = Number(existing);
         if (!isNaN(num) && num > 0) {
+          duracaoSortSeconds = num;
           baseRow['Duração da conversa'] = formatRawTimeToDisplay(num);
         }
       }
-      if (!baseRow['Tempo inicial de resposta'] || baseRow['Tempo inicial de resposta'] === '-') {
+      let tempoRespostaSortSeconds: number | null = null;
+      {
         const rawSeconds = r.tempoRespostaSegundos;
         if (rawSeconds !== null && rawSeconds !== undefined) {
+          tempoRespostaSortSeconds = rawSeconds;
           baseRow['Tempo inicial de resposta'] = formatRawTimeToDisplay(rawSeconds);
         } else if (r.tempoResposta !== null && r.tempoResposta !== undefined) {
           const seconds = r.tempoResposta * 60;
+          tempoRespostaSortSeconds = seconds;
           baseRow['Tempo inicial de resposta'] = formatRawTimeToDisplay(seconds);
         } else {
           baseRow['Tempo inicial de resposta'] = '-';
         }
-      } else {
-        const existing = baseRow['Tempo inicial de resposta'];
-        const num = Number(existing);
-        if (!isNaN(num) && num > 0) {
-          baseRow['Tempo inicial de resposta'] = formatRawTimeToDisplay(num);
-        }
       }
-      if (!baseRow['Avaliado pelos clientes']) {
-        baseRow['Avaliado pelos clientes'] = r.avaliacao || r.avaliadoPelosClientes || '-';
-      }
+      baseRow['Avaliado pelos clientes'] = r.avaliacao || r.avaliadoPelosClientes || '-';
 
       return {
         'id': r.id,
@@ -170,18 +204,42 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
         '_date': r.data,
         '_isExcluded': r.isExcluded,
         '_exclusionReason': r.exclusionReason,
-        '_notes': r.notes
+        '_notes': r.notes,
+        '_duracaoSortSeconds': duracaoSortSeconds,
+        '_tempoRespostaSortSeconds': tempoRespostaSortSeconds
       };
     });
   }, [selectedRows, columnFilters]);
 
+  const sortedData = useMemo(() => {
+    if (!sortConfig) return dataToDisplay;
+    const { column, direction } = sortConfig;
+    const getSortValue = (row: any): number => {
+      switch (column) {
+        case '#':
+        case 'Mensagens': {
+          const num = Number(row[column]);
+          return isNaN(num) ? -Infinity : num;
+        }
+        case 'Duração da conversa':
+          return row._duracaoSortSeconds ?? -Infinity;
+        case 'Tempo inicial de resposta':
+          return row._tempoRespostaSortSeconds ?? -Infinity;
+        default:
+          return 0;
+      }
+    };
+    const factor = direction === 'asc' ? 1 : -1;
+    return [...dataToDisplay].sort((a, b) => (getSortValue(a) - getSortValue(b)) * factor);
+  }, [dataToDisplay, sortConfig]);
+
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
     const endIndex = startIndex + ITEMS_PER_PAGE;
-    return dataToDisplay.slice(startIndex, endIndex);
-  }, [dataToDisplay, currentPage]);
+    return sortedData.slice(startIndex, endIndex);
+  }, [sortedData, currentPage]);
 
-  const totalPages = Math.ceil(dataToDisplay.length / ITEMS_PER_PAGE) || 1;
+  const totalPages = Math.ceil(sortedData.length / ITEMS_PER_PAGE) || 1;
 
   const goToPage = useCallback((page: number) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
@@ -252,6 +310,33 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
       setNoteRowId(null);
       setNoteText('');
     }
+  };
+
+  const handleEditClick = (rowId: string | undefined) => {
+    if (!rowId) return;
+    const row = selectedRows.find(r => r.id === rowId);
+    if (!row) return;
+    const seconds = row.tempoRespostaSegundos !== null && row.tempoRespostaSegundos !== undefined
+      ? row.tempoRespostaSegundos
+      : (row.tempoResposta !== null && row.tempoResposta !== undefined ? row.tempoResposta * 60 : null);
+    setEditRowId(rowId);
+    setEditColaborador(row.colaborador || '');
+    setEditTempoRespostaSeg(seconds !== null ? String(seconds) : '');
+    setEditAvaliacao(String(row.avaliacao ?? 0));
+    setShowEditDialog(true);
+  };
+
+  const saveEdit = async () => {
+    if (!editRowId) return;
+    const trimmedColaborador = editColaborador.trim();
+    const seconds = editTempoRespostaSeg.trim() === '' ? null : Number(editTempoRespostaSeg);
+    await updateRowFields(editRowId, {
+      colaborador: trimmedColaborador,
+      tempoRespostaSegundos: seconds !== null && isNaN(seconds) ? null : seconds,
+      avaliacao: Number(editAvaliacao)
+    });
+    setShowEditDialog(false);
+    setEditRowId(null);
   };
 
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -332,11 +417,28 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
               <tr className="border-b border-slate-200 dark:border-slate-800">
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider w-20">Ações</th>
-                {allColumns.map(col => (
-                  <th key={col} className="px-6 py-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">
-                    {col}
-                  </th>
-                ))}
+                {allColumns.map(col => {
+                  const sortable = SORTABLE_COLUMNS.includes(col);
+                  const isActive = sortConfig?.column === col;
+                  return (
+                    <th key={col} className="px-6 py-4 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                      {sortable ? (
+                        <button
+                          onClick={() => handleSort(col)}
+                          className={`flex items-center gap-1 hover:text-primary transition-colors ${isActive ? 'text-primary' : ''}`}
+                          title={`Ordenar por ${col}`}
+                        >
+                          {col}
+                          {isActive ? (
+                            sortConfig!.direction === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+                          ) : (
+                            <ArrowUpDown className="w-3.5 h-3.5 opacity-40" />
+                          )}
+                        </button>
+                      ) : col}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -391,8 +493,8 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
                         <button
                           onClick={() => handleNoteClick(row.id, row._notes || undefined)}
                           className={`p-1.5 rounded-lg transition-all ${
-                            hasNote 
-                              ? 'text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20' 
+                            hasNote
+                              ? 'text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
                               : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
                           }`}
                           title="Adicionar/Editar nota"
@@ -403,15 +505,29 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
                     </td>
                     {allColumns.map(col => {
                       const val = (row as any)[col];
+                      const isEditable = canEditRawData && EDITABLE_COLUMNS.includes(col);
                       return (
                         <td key={col} className={`px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap ${status.isExcluded ? 'opacity-50' : ''}`}>
-                          {val === undefined || val === null ? (
-                            <span className="text-slate-300 dark:text-slate-700 italic">vazio</span>
-                          ) : typeof val === 'object' && val instanceof Date ? (
-                            val.toLocaleString()
-                          ) : (
-                            String(val)
-                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span>
+                              {val === undefined || val === null ? (
+                                <span className="text-slate-300 dark:text-slate-700 italic">vazio</span>
+                              ) : typeof val === 'object' && val instanceof Date ? (
+                                val.toLocaleString()
+                              ) : (
+                                String(val)
+                              )}
+                            </span>
+                            {isEditable && (
+                              <button
+                                onClick={() => handleEditClick(row.id)}
+                                className="p-1 rounded-md opacity-0 group-hover:opacity-100 transition-all text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-primary shrink-0"
+                                title="Editar atendimento"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       );
                     })}
@@ -600,6 +716,87 @@ export default function RawDataView({ onBack }: RawDataViewProps) {
                 </button>
                 <button
                   onClick={saveNote}
+                  className="flex-1 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm hover:opacity-90 transition-all"
+                >
+                  Salvar
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showEditDialog && (
+          <>
+            <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowEditDialog(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-xl z-50 max-w-sm w-full border border-slate-200 dark:border-slate-800"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                  <Pencil className="w-5 h-5" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Editar Atendimento</h3>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                As alterações são refletidas automaticamente no Ranking e na tela Geral.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                    Colaborador
+                  </label>
+                  <input
+                    type="text"
+                    value={editColaborador}
+                    onChange={(e) => setEditColaborador(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                    Tempo inicial de resposta (segundos)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editTempoRespostaSeg}
+                    onChange={(e) => setEditTempoRespostaSeg(e.target.value)}
+                    placeholder="Ex: 120"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                    Avaliação
+                  </label>
+                  <select
+                    value={editAvaliacao}
+                    onChange={(e) => setEditAvaliacao(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                  >
+                    <option value="0">Sem avaliação</option>
+                    <option value="1">1 estrela</option>
+                    <option value="2">2 estrelas</option>
+                    <option value="3">3 estrelas</option>
+                    <option value="4">4 estrelas</option>
+                    <option value="5">5 estrelas</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowEditDialog(false)}
+                  className="flex-1 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-bold text-sm hover:opacity-90 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={saveEdit}
                   className="flex-1 px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm hover:opacity-90 transition-all"
                 >
                   Salvar

@@ -46,6 +46,7 @@ export interface UserPermissions {
   delete_data: boolean;
   edit_collaborators: boolean;
   reorder_queue: boolean;
+  edit_raw_data: boolean;
 }
 
 interface AppState {
@@ -84,6 +85,7 @@ interface AppState {
   deleteCollaborator: (name: string) => Promise<void>;
   toggleRowExclusion: (rowId: string, exclude: boolean, reason?: string) => Promise<void>;
   updateRowNote: (rowId: string, note: string) => Promise<void>;
+  updateRowFields: (rowId: string, fields: { colaborador?: string; tempoRespostaSegundos?: number | null; avaliacao?: number }) => Promise<void>;
   updateCollaboratorAvatar: (name: string, avatarUrl: string, options?: any) => Promise<void>;
   updateCollaboratorBadges: (name: string, badges: string[]) => Promise<void>;
   updateCollaboratorGoals: (name: string, goals: any[]) => Promise<void>;
@@ -156,7 +158,8 @@ const basePermissions: UserPermissions = {
   sync_external_data: false,
   delete_data: false,
   edit_collaborators: false,
-  reorder_queue: false
+  reorder_queue: false,
+  edit_raw_data: false
 };
 
 function getDateRange(filter: string, custom: { start: string; end: string }) {
@@ -450,7 +453,8 @@ const clearColumnFilters = useCallback(() => {
             sync_external_data: true,
             delete_data: true,
             edit_collaborators: true,
-            reorder_queue: true
+            reorder_queue: true,
+            edit_raw_data: true
           });
           return;
         }
@@ -1191,6 +1195,26 @@ const clearColumnFilters = useCallback(() => {
     }
   }, [refreshData]);
 
+  const updateRowFields = useCallback(async (
+    rowId: string,
+    fields: { colaborador?: string; tempoRespostaSegundos?: number | null; avaliacao?: number }
+  ) => {
+    try {
+      const payload: Record<string, any> = { id: rowId };
+      if (fields.colaborador !== undefined) payload.colaborador = fields.colaborador;
+      if (fields.tempoRespostaSegundos !== undefined) {
+        payload.tempo_resposta_segundos = fields.tempoRespostaSegundos;
+        payload.tempo_resposta = fields.tempoRespostaSegundos === null ? null : fields.tempoRespostaSegundos / 60;
+      }
+      if (fields.avaliacao !== undefined) payload.avaliacao = fields.avaliacao;
+      await apiSend('/api/app-data/support-data', 'PATCH', payload);
+      await refreshData();
+    } catch (err: any) {
+      logError('Error updating row fields:', err);
+      setError(`Erro ao salvar edição: ${err?.message}`);
+    }
+  }, [refreshData]);
+
   const clearError = useCallback(() => setError(null), []);
 
   // Zerar as linhas basta: colaboradores e dashboard são derivados delas.
@@ -1269,6 +1293,7 @@ const clearColumnFilters = useCallback(() => {
         deleteCollaborator,
         toggleRowExclusion,
         updateRowNote,
+        updateRowFields,
         updateCollaboratorAvatar,
         updateCollaboratorBadges,
         updateCollaboratorGoals,
@@ -1307,7 +1332,7 @@ const clearColumnFilters = useCallback(() => {
     customRange, columnFilters, setColumnFilter, clearColumnFilters, dateRange,
     error, bitrixTickets, odooTickets, setRawData, setOdooTicketsData,
     syncOdooTickets, syncBitrixTickets, resetData, clearAllData, deleteUpload,
-    deleteCollaborator, toggleRowExclusion, updateRowNote,
+    deleteCollaborator, toggleRowExclusion, updateRowNote, updateRowFields,
     updateCollaboratorAvatar, updateCollaboratorBadges, updateCollaboratorGoals,
     refreshData, clearError, importLogs, importIndicators, user, userRole,
     userPermissions, isAuthReady, refreshSession, dashboardLayout, queueLayout,

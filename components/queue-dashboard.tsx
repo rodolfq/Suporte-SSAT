@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useQueue, QueueOperator, Operator } from '@/context/queue-context';
+import { useQueue, QueueOperator, Operator, LUNCH_CAPACITY } from '@/context/queue-context';
 import { useApp } from '@/context/app-context';
 import { 
   Check, 
@@ -59,7 +59,7 @@ import { ptBR } from 'date-fns/locale';
 // Sortable Block Component for Layout
 // Constante de módulo: como array literal dentro do componente, virava uma
 // referência nova a cada render e era repassada para todas as linhas da fila.
-const lunchTimes = ['11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00'];
+const lunchTimes = ['11:00', '12:00', '13:00'];
 
 function SortableBlock({
   id, 
@@ -152,13 +152,14 @@ interface SortableRowProps {
   isLast: boolean;
   onCheck: (id: string, field: any, value: boolean) => void;
   onRemove: (id: string) => void;
+  onRemovePermanently: (operadorId: string, nome?: string) => void;
   onLunchChange: (id: string, time: string) => void;
   onInfoChange: (id: string, field: 'atendimento_tipo' | 'atendimento_hora' | 'atendimento_obs', value: string) => void;
   onComplete: (id: string) => void;
   isShiftHandover: boolean;
 }
 
-function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, isShiftHandover, onCheck, onLunchChange, lunchTimes, isReadOnly, canReorder }: SortableRowProps & { lunchTimes: string[], isReadOnly?: boolean, canReorder?: boolean }) {
+function SortableRow({ op, index, isFirst, onRemove, onRemovePermanently, onInfoChange, onComplete, isShiftHandover, onCheck, onLunchChange, lunchTimes, lunchCounts, isReadOnly, canReorder }: SortableRowProps & { lunchTimes: string[], lunchCounts: Record<string, number>, isReadOnly?: boolean, canReorder?: boolean }) {
   const {
     attributes,
     listeners,
@@ -269,11 +270,19 @@ function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, i
           className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-1 py-1 text-[9px] text-slate-700 dark:text-slate-300 outline-none w-16 disabled:opacity-50"
         >
           <option value="">-</option>
-          {lunchTimes.map(t => <option key={t} value={t}>{t}</option>)}
+          {lunchTimes.map(t => {
+            const capacity = LUNCH_CAPACITY[t];
+            const isFull = op.almoco?.horario !== t && capacity !== undefined && (lunchCounts[t] || 0) >= capacity;
+            return (
+              <option key={t} value={t} disabled={isFull}>
+                {t}{isFull ? ' (cheio)' : ''}
+              </option>
+            );
+          })}
         </select>
       </td>
       <td className="px-4 py-3">
-        <select 
+        <select
           disabled={isReadOnly}
           value={op.atendimento_tipo || 'Chamado'}
           onChange={(e) => onInfoChange(op.id, 'atendimento_tipo', e.target.value as any)}
@@ -321,6 +330,15 @@ function SortableRow({ op, index, isFirst, onRemove, onInfoChange, onComplete, i
         </div>
       </td>
       <td className="px-4 py-3 text-right">
+        {!isReadOnly && (
+          <button
+            onClick={() => onRemovePermanently(op.operador_id, op.operador?.nome)}
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-all"
+            title="Remover analista da fila (permanente)"
+          >
+            <UserMinus className="w-4 h-4" />
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -345,6 +363,7 @@ export default function QueueDashboard() {
     addOperatorToQueue,
     addCollaboratorToQueue,
     removeOperatorFromQueue,
+    removeOperatorPermanently,
     schedules,
     updateSchedule,
     deleteSchedule,
@@ -574,6 +593,22 @@ export default function QueueDashboard() {
       .filter(c => !term || normalizeName(c.nome).includes(term))
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   }, [operators, collaborators, currentQueue, addSearch]);
+
+  const handleRemovePermanently = (operadorId: string, nome?: string) => {
+    const confirmed = window.confirm(
+      `Remover ${nome || 'este analista'} definitivamente da fila? Ele deixará de entrar automaticamente nas próximas filas geradas.`
+    );
+    if (confirmed) removeOperatorPermanently(operadorId);
+  };
+
+  const lunchCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const op of currentQueue) {
+      const horario = op.almoco?.horario;
+      if (horario) counts[horario] = (counts[horario] || 0) + 1;
+    }
+    return counts;
+  }, [currentQueue]);
 
   const handleAddCandidate = async (candidate: typeof addCandidates[number]) => {
     setAddingKey(candidate.key);
@@ -857,11 +892,13 @@ export default function QueueDashboard() {
                                   isFirst={index === 0}
                                   isLast={index === currentQueue.length - 1}
                                   onRemove={removeOperatorFromQueue}
+                                  onRemovePermanently={handleRemovePermanently}
                                   onInfoChange={updateInfo}
                                   onComplete={completeActivity}
                                   onCheck={updateChecklist}
                                   onLunchChange={updateLunch}
                                   lunchTimes={lunchTimes}
+                                  lunchCounts={lunchCounts}
                                   isShiftHandover={currentQueueData?.responsavel_passagem_turno_id === op.operador_id}
                                   isReadOnly={isPastDate}
                                   canReorder={canReorderQueue}
@@ -962,19 +999,25 @@ export default function QueueDashboard() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {lunchTimes.map(time => {
                           const opsAtTime = currentQueue.filter(op => op.almoco?.horario === time);
+                          const capacity = LUNCH_CAPACITY[time];
+                          const isFull = capacity !== undefined && opsAtTime.length >= capacity;
                           return (
                             <div key={time} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
                               <div className="flex items-center justify-between mb-3">
                                 <span className="text-sm font-black text-slate-900 dark:text-slate-100">{time}</span>
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase">{opsAtTime.length}</span>
+                                  <span className={`text-[10px] font-bold uppercase ${isFull ? 'text-rose-500' : 'text-slate-400'}`}>
+                                    {opsAtTime.length}{capacity !== undefined ? `/${capacity}` : ''}
+                                  </span>
                                   {!isPastDate && (
-                                    <select 
+                                    <select
+                                      disabled={isFull}
                                       onChange={(e) => {
                                         if (e.target.value) updateLunch(e.target.value, time);
                                         e.target.value = '';
                                       }}
-                                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-1 py-0.5 text-[8px] outline-none"
+                                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-1 py-0.5 text-[8px] outline-none disabled:opacity-40"
+                                      title={isFull ? 'Horário cheio' : undefined}
                                     >
                                       <option value="">+</option>
                                       {currentQueue

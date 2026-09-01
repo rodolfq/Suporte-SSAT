@@ -28,6 +28,20 @@ export async function POST(req: NextRequest) {
     res.cookies.set(SESSION_COOKIE, token, { ...SESSION_COOKIE_OPTIONS, maxAge: SESSION_TTL_SECONDS });
     return res;
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Erro ao conectar.' }, { status: 500 });
+    console.error('Erro no login:', err);
+
+    // Erros do driver `pg` (ex.: banco fora do ar, DATABASE_URL ausente/errada,
+    // host inacessível) vêm com um `code` de conexão em vez de uma mensagem
+    // amigável, e sem isso o usuário só via "Erro ao conectar." sem saber se
+    // era senha ou infraestrutura.
+    const connectionCodes = ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', '28P01', '3D000'];
+    if (connectionCodes.includes(err.code) || !process.env.DATABASE_URL) {
+      return NextResponse.json(
+        { error: 'Não foi possível conectar ao banco de dados. Verifique se DATABASE_URL está configurado corretamente.' },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json({ error: err.message || 'Erro inesperado ao realizar login.' }, { status: 500 });
   }
 }

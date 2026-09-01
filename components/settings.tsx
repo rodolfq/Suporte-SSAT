@@ -1416,10 +1416,10 @@ export default function Settings() {
       case 'bitrix-timeman':
         if (userRole !== 'admin') return null;
         
-        const relevantBitrixUsers = bitrixUsers.filter(u => 
-          collaborators.length === 0 || collaborators.some(c => u.name.toLowerCase().includes(c.name.toLowerCase())) || 
+        const relevantBitrixUsers = bitrixUsers.filter(u =>
+          collaborators.length === 0 || collaborators.some(c => u.name.toLowerCase().includes(c.name.toLowerCase())) ||
           collaborators.some(c => c.name.toLowerCase().includes(u.name.toLowerCase()))
-        );
+        ).sort((a, b) => (a.status === 'OPENED' ? 0 : 1) - (b.status === 'OPENED' ? 0 : 1));
 
         return (
           <section className="space-y-4 h-full">

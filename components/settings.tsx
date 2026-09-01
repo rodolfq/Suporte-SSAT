@@ -1419,7 +1419,11 @@ export default function Settings() {
         const relevantBitrixUsers = bitrixUsers.filter(u =>
           collaborators.length === 0 || collaborators.some(c => u.name.toLowerCase().includes(c.name.toLowerCase())) ||
           collaborators.some(c => c.name.toLowerCase().includes(u.name.toLowerCase()))
-        ).sort((a, b) => (a.status === 'OPENED' ? 0 : 1) - (b.status === 'OPENED' ? 0 : 1));
+        ).sort((a, b) => {
+          const statusDiff = (a.status === 'OPENED' ? 0 : 1) - (b.status === 'OPENED' ? 0 : 1);
+          if (statusDiff !== 0) return statusDiff;
+          return a.name.localeCompare(b.name, 'pt-BR');
+        });
 
         return (
           <section className="space-y-4 h-full">
